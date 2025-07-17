@@ -188,7 +188,8 @@ class PairCreator implements vscode.Disposable {
   }
 
   // Checks for custom pairing rules and offers to create them if not found
-  private async checkAndOfferCustomRules(language: 'c' | 'cpp', uncertain: boolean): Promise<PairingRule | undefined> {
+  // Returns: PairingRule if user selected a rule, null if user cancelled, undefined if no custom rules exist
+  private async checkAndOfferCustomRules(language: 'c' | 'cpp', uncertain: boolean): Promise<PairingRule | null | undefined> {
     // First check workspace rules, then global rules
     const workspaceRules = PairingRuleService.getRules('workspace');
     const globalRules = PairingRuleService.getRules('user');
@@ -201,14 +202,22 @@ class PairCreator implements vscode.Disposable {
 
     if (languageRules.length > 0) {
       // We have custom rules for this language, let user choose
-      return await this.selectFromCustomRules(languageRules, language);
+      const result = await this.selectFromCustomRules(languageRules, language);
+      // If user cancelled (result is undefined), return null to indicate cancellation
+      return result === undefined ? null : result;
     }
 
     // No custom rules found, check if user wants to create some
     if (!uncertain) {
       const shouldCreateRules = await this.offerToCreateCustomRules(language);
+      if (shouldCreateRules === null) {
+        // User cancelled the dialog
+        return null;
+      }
       if (shouldCreateRules) {
-        return await this.createCustomRules(language);
+        const result = await this.createCustomRules(language);
+        // If user cancelled during custom rule creation, return null
+        return result === undefined ? null : result;
       }
     }
 
@@ -217,9 +226,13 @@ class PairCreator implements vscode.Disposable {
 
   // Let user select from available custom rules
   private async selectFromCustomRules(rules: PairingRule[], language: 'c' | 'cpp'): Promise<PairingRule | undefined> {
+    // Add C language templates as fixed options
+    const cTemplates = TEMPLATE_RULES.filter(rule => rule.language === 'c');
+    
     // Add option to use default rules or create new ones
     const choices: (PairingRule | { key: string; label: string; description: string; isSpecial: boolean })[] = [
       ...rules,
+      ...cTemplates,
       {
         key: 'use_default',
         label: '$(list-unordered) Use Default Templates',
@@ -241,7 +254,8 @@ class PairCreator implements vscode.Disposable {
 
     if (!result) return undefined;
 
-    if ('isSpecial' in result) {
+    // Check if this is a special action (not a rule)
+    if ('isSpecial' in result && result.isSpecial) {
       if (result.key === 'use_default') {
         return undefined; // Fall back to default behavior
       } else if (result.key === 'create_new') {
@@ -249,11 +263,13 @@ class PairCreator implements vscode.Disposable {
       }
     }
 
+    // If it's not a special action, it's a rule (either custom or C template)
     return result as PairingRule;
   }
 
   // Offers to create custom rules for the detected language
-  private async offerToCreateCustomRules(language: 'c' | 'cpp'): Promise<boolean> {
+  // Returns: true if user wants to create custom rules, false if user chooses defaults, null if user cancels
+  private async offerToCreateCustomRules(language: 'c' | 'cpp'): Promise<boolean | null> {
     const languageName = language.toUpperCase();
     const message = `No custom pairing rules found for ${languageName}. Would you like to create custom rules to use different file extensions (e.g., .cc/.hh instead of .cpp/.h)?`;
 
@@ -264,7 +280,14 @@ class PairCreator implements vscode.Disposable {
       'Use Defaults'
     );
 
-    return result === 'Create Custom Rules';
+    if (result === 'Create Custom Rules') {
+      return true;
+    } else if (result === 'Use Defaults') {
+      return false;
+    } else {
+      // User cancelled the dialog (pressed ESC or clicked outside)
+      return null;
+    }
   }
 
   // Creates custom rules with user input
@@ -367,9 +390,16 @@ class PairCreator implements vscode.Disposable {
   // Prompts the user to select a file pair template type from available options
   private async promptForPairingRule(language: 'c' | 'cpp', uncertain: boolean): Promise<PairingRule | undefined> {
     // Check if we have custom pairing rules for the detected language
-    const customRules = await this.checkAndOfferCustomRules(language, uncertain);
-    if (customRules) {
-      return customRules;
+    const customRulesResult = await this.checkAndOfferCustomRules(language, uncertain);
+
+    // If user cancelled at any point during custom rules flow, exit completely
+    if (customRulesResult === null) {
+      return undefined;
+    }
+
+    // If checkAndOfferCustomRules returns a rule, use it
+    if (customRulesResult) {
+      return customRulesResult;
     }
 
     let desiredOrder: string[];
