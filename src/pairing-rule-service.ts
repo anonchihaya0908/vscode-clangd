@@ -1,9 +1,9 @@
-// src/pairing-rules.service.ts
+// src/pairing-rule-service.ts
 
 import * as vscode from 'vscode';
 
-// The data structure for a single pairing rule.
-// This should be kept in sync with the one in create-source-header-pair.ts
+// --- Public Interface and Types ---
+
 export interface PairingRule {
     key: string;
     label: string;
@@ -15,13 +15,43 @@ export interface PairingRule {
     isStruct?: boolean;
 }
 
-// The key for the setting in settings.json
+// --- Constants ---
+
 const CONFIG_KEY = 'createPair.rules';
 
-// A helper to get the full namespaced key
-function getConfigKey(): string {
-    // Assuming your extension's name in package.json is 'clangd'
-    return `clangd.${CONFIG_KEY}`;
+// The single source of truth for the extension's default rules.
+// This is used as a fallback when no user or workspace configuration is found.
+export const DEFAULT_TEMPLATE_RULES: ReadonlyArray<PairingRule> = [
+    { key: 'cpp_empty', label: 'Empty C++ Pair', description: 'Creates basic .h/.cpp files.', language: 'cpp', headerExt: '.h', sourceExt: '.cpp' },
+    { key: 'cpp_class', label: 'C++ Class', description: 'Creates a .h/.cpp pair with a class boilerplate.', language: 'cpp', headerExt: '.h', sourceExt: '.cpp', isClass: true },
+    { key: 'cpp_struct', label: 'C++ Struct', description: 'Creates a .h/.cpp pair with a struct boilerplate.', language: 'cpp', headerExt: '.h', sourceExt: '.cpp', isStruct: true },
+    { key: 'c_empty', label: 'Empty C Pair', description: 'Creates basic .h/.c files for functions.', language: 'c', headerExt: '.h', sourceExt: '.c' },
+    { key: 'c_struct', label: 'C Struct', description: 'Creates a .h/.c pair with a typedef struct.', language: 'c', headerExt: '.h', sourceExt: '.c', isStruct: true }
+];
+
+// --- Service API ---
+
+/**
+ * Gets the currently active pairing rules, respecting the configuration hierarchy.
+ * Priority: Workspace > User (Global) > Extension Default.
+ * @returns A readonly array of the currently effective PairingRule objects.
+ */
+export function getActiveRules(): ReadonlyArray<PairingRule> {
+    const config = vscode.workspace.getConfiguration('clangd');
+    return config.get<PairingRule[]>(CONFIG_KEY, [...DEFAULT_TEMPLATE_RULES]);
+}
+
+/**
+ * Checks if a custom configuration exists at the specified scope.
+ * @param scope The configuration scope to check.
+ * @returns True if a custom rule set exists, false otherwise.
+ */
+export function hasCustomRules(scope: 'workspace' | 'user'): boolean {
+    const config = vscode.workspace.getConfiguration('clangd');
+    const inspection = config.inspect<PairingRule[]>(CONFIG_KEY);
+    const value = scope === 'workspace' ? inspection?.workspaceValue : inspection?.globalValue;
+    // It's custom if the value is defined and is an array (even an empty one).
+    return Array.isArray(value);
 }
 
 /**
@@ -40,7 +70,7 @@ export function getRules(scope: 'workspace' | 'user'): PairingRule[] | undefined
 }
 
 /**
- * Writes a given set of pairing rules to the specified configuration scope.
+ * Writes a given set of rules to the specified configuration scope, overwriting any existing rules.
  * @param rules The array of rules to write.
  * @param scope The scope to write to ('workspace' or 'user').
  */
@@ -48,22 +78,18 @@ export async function writeRules(rules: PairingRule[], scope: 'workspace' | 'use
     const target = scope === 'workspace'
         ? vscode.ConfigurationTarget.Workspace
         : vscode.ConfigurationTarget.Global;
-
-    const config = vscode.workspace.getConfiguration('clangd');
-    await config.update(CONFIG_KEY, rules, target);
+    await vscode.workspace.getConfiguration('clangd').update(CONFIG_KEY, rules, target);
 }
 
 /**
  * Resets the pairing rules by removing them from the specified configuration scope.
- * This causes the application to fall back to the next level (e.g., global or default).
- * @param scope The scope to reset ('workspace' or 'user').
+ * This causes VS Code to fall back to the next configuration level (e.g., global or default).
+ * @param scope The configuration scope to reset.
  */
 export async function resetRules(scope: 'workspace' | 'user'): Promise<void> {
-    // To reset, we update the value to 'undefined'.
     const target = scope === 'workspace'
         ? vscode.ConfigurationTarget.Workspace
         : vscode.ConfigurationTarget.Global;
-
-    const config = vscode.workspace.getConfiguration('clangd');
-    await config.update(CONFIG_KEY, undefined, target);
+    // To reset a setting, we update its value to 'undefined'.
+    await vscode.workspace.getConfiguration('clangd').update(CONFIG_KEY, undefined, target);
 }
