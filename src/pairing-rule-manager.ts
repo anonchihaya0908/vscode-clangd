@@ -79,7 +79,6 @@ export namespace PairingRuleUI {
         { label: '.hh / .cc', description: 'Alternative C++ extensions', headerExt: '.hh', sourceExt: '.cc', language: 'cpp' as const },
         { label: '.hpp / .cpp', description: 'Header Plus Plus style', headerExt: '.hpp', sourceExt: '.cpp', language: 'cpp' as const },
         { label: '.hxx / .cxx', description: 'Extended C++ extensions', headerExt: '.hxx', sourceExt: '.cxx', language: 'cpp' as const },
-        { label: '.h / .c', description: 'Standard C extensions', headerExt: '.h', sourceExt: '.c', language: 'c' as const }
     ];
 
     // Create rule choices from extension options

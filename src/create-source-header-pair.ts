@@ -25,7 +25,7 @@ const DEFAULT_PLACEHOLDERS = {
 const TEMPLATE_RULES: ReadonlyArray<PairingRule> = [
   {
     key: 'cpp_empty',
-    label: '$(new-file) Empty C++ Pair',
+    label: '$(new-file) C++ Pair',
     description: 'Creates a basic .h/.cpp file pair with header guards.',
     language: 'cpp', headerExt: '.h', sourceExt: '.cpp'
   },
@@ -43,7 +43,7 @@ const TEMPLATE_RULES: ReadonlyArray<PairingRule> = [
   },
   {
     key: 'c_empty',
-    label: '$(file-code) Empty C Pair',
+    label: '$(file-code) C Pair',
     description: 'Creates a basic .h/.c file pair for function declarations.',
     language: 'c', headerExt: '.h', sourceExt: '.c'
   },
@@ -322,7 +322,7 @@ class PairCreator implements vscode.Disposable {
   private async offerToCreateCustomRules(language: 'c' | 'cpp'): Promise<boolean | null> {
     // This method should only be called for C++ since C uses standard .c/.h
     if (language === 'c') {
-      return false; // Always use defaults for C
+      return false; // Always Dismiss for C
     }
 
     const message = `No custom pairing rules found for C++. Would you like to create custom rules to use different file extensions (e.g., .cc/.hh instead of .cpp/.h)?`;
@@ -331,12 +331,12 @@ class PairCreator implements vscode.Disposable {
       message,
       { modal: false },
       'Create Custom Rules',
-      'Use Defaults'
+      'Dismiss'
     );
 
     if (result === 'Create Custom Rules') {
       return true;
-    } else if (result === 'Use Defaults') {
+    } else if (result === 'Dismiss') {
       return false;
     } else {
       // User cancelled the dialog (pressed ESC or clicked outside)
@@ -474,6 +474,25 @@ class PairCreator implements vscode.Disposable {
       placeHolder: 'Please select the type of file pair to create.',
       title: 'Create Source/Header Pair'
     });
+
+    // Validate language compatibility and warn user if needed
+    if (result && !uncertain) {
+      const selectedLanguage = result.language;
+      if (language !== selectedLanguage) {
+        const detectedLangName = language === 'c' ? 'C' : 'C++';
+        const selectedLangName = selectedLanguage === 'c' ? 'C' : 'C++';
+
+        const shouldContinue = await vscode.window.showWarningMessage(
+          `You're working in a ${detectedLangName} file but selected a ${selectedLangName} template. This may create files with incompatible extensions or content.`,
+          'Continue Anyway',
+          'Cancel'
+        );
+
+        if (shouldContinue !== 'Continue Anyway') {
+          return undefined; // User cancelled
+        }
+      }
+    }
 
     return result;
   }
