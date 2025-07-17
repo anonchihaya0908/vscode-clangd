@@ -212,12 +212,17 @@
             {
                 "command": "clangd.switchheadersource",
                 "category": "clangd",
-                "title": "Switch Between Source/Header"
+                "title": "Switch Between Source/Header Pair"
             },
             {
                 "command": "clangd.createSourceHeaderPair",
                 "category": "clangd",
-                "title": "Create Source/Header Pair"
+                "title": "New Source/Header Pair"
+            },
+            {
+                "command": "clangd.createPair.configureRules",
+                "category": "clangd",
+                "title": "Configure Source/Header Pairing Rules"
             },
             {
                 "command": "clangd.install",
