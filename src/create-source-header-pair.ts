@@ -181,18 +181,23 @@ class PairCreator implements vscode.Disposable {
   // Checks for custom pairing rules and offers to create them if not found
   // Returns: PairingRule if user selected a rule, null if user cancelled, undefined if no custom rules exist, 'use_default' if user wants default templates
   private async checkAndOfferCustomRules(language: 'c' | 'cpp', uncertain: boolean): Promise<PairingRule | null | undefined | 'use_default'> {
-    // First check workspace rules, then global rules
+    // For C language, skip custom rules completely since C only uses .c/.h
+    if (language === 'c') {
+      return undefined; // Always fall back to default C templates
+    }
+
+    // Only handle custom rules for C++
     const workspaceRules = PairingRuleService.getRules('workspace');
     const globalRules = PairingRuleService.getRules('user');
 
     // Combine available rules (workspace takes precedence)
     const availableRules = [...(workspaceRules || []), ...(globalRules || [])];
 
-    // Check if we have any custom rules for the detected language
+    // Check if we have any custom rules for C++
     const languageRules = availableRules.filter(rule => rule.language === language);
 
     if (languageRules.length > 0) {
-      // We have custom rules for this language, let user choose
+      // We have custom rules for C++, let user choose
       const result = await this.selectFromCustomRules(languageRules, language);
       // If user cancelled (result is undefined), return null to indicate cancellation
       if (result === undefined) {
@@ -201,7 +206,7 @@ class PairCreator implements vscode.Disposable {
       return result; // This can be PairingRule or 'use_default'
     }
 
-    // No custom rules found, check if user wants to create some
+    // No custom rules found for C++, check if user wants to create some
     if (!uncertain) {
       const shouldCreateRules = await this.offerToCreateCustomRules(language);
       if (shouldCreateRules === null) {
@@ -296,7 +301,7 @@ class PairCreator implements vscode.Disposable {
 
     const result = await vscode.window.showQuickPick(choices, {
       placeHolder: `Select a ${language.toUpperCase()} pairing rule`,
-      title: 'Custom Pairing Rules Available'
+      title: 'Custom Pairing Rules Available',
     });
 
     if (!result) return undefined;
@@ -312,11 +317,15 @@ class PairCreator implements vscode.Disposable {
     return result as PairingRule;
   }
 
-  // Offers to create custom rules for the detected language
+  // Offers to create custom rules for C++ (C is not supported for custom rules)
   // Returns: true if user wants to create custom rules, false if user chooses defaults, null if user cancels
   private async offerToCreateCustomRules(language: 'c' | 'cpp'): Promise<boolean | null> {
-    const languageName = language.toUpperCase();
-    const message = `No custom pairing rules found for ${languageName}. Would you like to create custom rules to use different file extensions (e.g., .cc/.hh instead of .cpp/.h)?`;
+    // This method should only be called for C++ since C uses standard .c/.h
+    if (language === 'c') {
+      return false; // Always use defaults for C
+    }
+
+    const message = `No custom pairing rules found for C++. Would you like to create custom rules to use different file extensions (e.g., .cc/.hh instead of .cpp/.h)?`;
 
     const result = await vscode.window.showInformationMessage(
       message,
@@ -335,26 +344,24 @@ class PairCreator implements vscode.Disposable {
     }
   }
 
-  // Creates custom rules with user input
+  // Creates custom rules with user input (only for C++)
   private async createCustomRules(language: 'c' | 'cpp'): Promise<PairingRule | undefined> {
-    const languageName = language.toUpperCase();
+    // This method should only be called for C++ since C uses standard .c/.h
+    if (language === 'c') {
+      return undefined; // No custom rules for C
+    }
 
-    // Predefined common extension combinations
-    const commonExtensions = language === 'cpp'
-      ? [
-        { label: '.h / .cpp (Default)', headerExt: '.h', sourceExt: '.cpp' },
-        { label: '.hh / .cc (Alternative)', headerExt: '.hh', sourceExt: '.cc' },
-        { label: '.hpp / .cpp (Header Plus Plus)', headerExt: '.hpp', sourceExt: '.cpp' },
-        { label: '.hxx / .cxx (Extended)', headerExt: '.hxx', sourceExt: '.cxx' },
-        { label: 'Custom Extensions', headerExt: '', sourceExt: '' }
-      ]
-      : [
-        { label: '.h / .c (Default)', headerExt: '.h', sourceExt: '.c' },
-        { label: 'Custom Extensions', headerExt: '', sourceExt: '' }
-      ];
+    // Predefined common C++ extension combinations
+    const commonExtensions = [
+      { label: '.h / .cpp (Default)', headerExt: '.h', sourceExt: '.cpp' },
+      { label: '.hh / .cc (Alternative)', headerExt: '.hh', sourceExt: '.cc' },
+      { label: '.hpp / .cpp (Header Plus Plus)', headerExt: '.hpp', sourceExt: '.cpp' },
+      { label: '.hxx / .cxx (Extended)', headerExt: '.hxx', sourceExt: '.cxx' },
+      { label: 'Custom Extensions', headerExt: '', sourceExt: '' }
+    ];
 
     const selectedExtension = await vscode.window.showQuickPick(commonExtensions, {
-      placeHolder: `Select file extensions for ${languageName} files`,
+      placeHolder: `Select file extensions for C++ files`,
       title: 'Choose File Extensions'
     });
 
@@ -380,8 +387,8 @@ class PairCreator implements vscode.Disposable {
       headerExt = inputHeaderExt;
 
       const inputSourceExt = await vscode.window.showInputBox({
-        prompt: `Enter source file extension for ${languageName} (e.g., .c, .cpp, .cc)`,
-        placeHolder: language === 'cpp' ? '.cpp' : '.c',
+        prompt: `Enter source file extension for C++ (e.g., .cpp, .cc, .cxx)`,
+        placeHolder: '.cpp',
         validateInput: (text) => {
           if (!text || !text.startsWith('.') || text.length < 2) {
             return 'Please enter a valid file extension starting with a dot (e.g., .cpp)';
@@ -394,12 +401,12 @@ class PairCreator implements vscode.Disposable {
       sourceExt = inputSourceExt;
     }
 
-    // Create the custom rule
+    // Create the custom rule (only for C++)
     const customRule: PairingRule = {
-      key: `custom_${language}_${Date.now()}`,
-      label: `$(new-file) ${language === 'cpp' ? 'C++' : 'C'} Pair (${headerExt}/${sourceExt})`,
+      key: `custom_cpp_${Date.now()}`,
+      label: `$(new-file) C++ Pair (${headerExt}/${sourceExt})`,
       description: `Creates a ${headerExt}/${sourceExt} file pair with header guards.`,
-      language: language,
+      language: 'cpp',
       headerExt: headerExt,
       sourceExt: sourceExt
     };
@@ -465,7 +472,7 @@ class PairCreator implements vscode.Disposable {
 
     const result = await vscode.window.showQuickPick(choices, {
       placeHolder: 'Please select the type of file pair to create.',
-      title: 'Create Pair - Step 1 of 2'
+      title: 'Create Source/Header Pair'
     });
 
     return result;
@@ -482,7 +489,7 @@ class PairCreator implements vscode.Disposable {
       prompt,
       placeHolder: this.getPlaceholder(rule),
       validateInput: (text) => VALIDATION_PATTERNS.IDENTIFIER.test(text?.trim() || '') ? null : 'Invalid C/C++ identifier.',
-      title: 'Create Pair - Step 2 of 2'
+      title: 'Create Source/Header Pair'
     });
   }
   // Generates the content for both header and source files based on the selected template rule
