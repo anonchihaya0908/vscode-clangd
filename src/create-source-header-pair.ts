@@ -188,8 +188,8 @@ class PairCreator implements vscode.Disposable {
   }
 
   // Checks for custom pairing rules and offers to create them if not found
-  // Returns: PairingRule if user selected a rule, null if user cancelled, undefined if no custom rules exist
-  private async checkAndOfferCustomRules(language: 'c' | 'cpp', uncertain: boolean): Promise<PairingRule | null | undefined> {
+  // Returns: PairingRule if user selected a rule, null if user cancelled, undefined if no custom rules exist, 'use_default' if user wants default templates
+  private async checkAndOfferCustomRules(language: 'c' | 'cpp', uncertain: boolean): Promise<PairingRule | null | undefined | 'use_default'> {
     // First check workspace rules, then global rules
     const workspaceRules = PairingRuleService.getRules('workspace');
     const globalRules = PairingRuleService.getRules('user');
@@ -204,7 +204,10 @@ class PairCreator implements vscode.Disposable {
       // We have custom rules for this language, let user choose
       const result = await this.selectFromCustomRules(languageRules, language);
       // If user cancelled (result is undefined), return null to indicate cancellation
-      return result === undefined ? null : result;
+      if (result === undefined) {
+        return null;
+      }
+      return result; // This can be PairingRule or 'use_default'
     }
 
     // No custom rules found, check if user wants to create some
@@ -225,14 +228,73 @@ class PairCreator implements vscode.Disposable {
   }
 
   // Let user select from available custom rules
-  private async selectFromCustomRules(rules: PairingRule[], language: 'c' | 'cpp'): Promise<PairingRule | undefined> {
-    // Add C language templates as fixed options
-    const cTemplates = TEMPLATE_RULES.filter(rule => rule.language === 'c');
-    
+  private async selectFromCustomRules(rules: PairingRule[], language: 'c' | 'cpp'): Promise<PairingRule | undefined | 'use_default'> {
+    // Find the most common custom rule extensions for the detected language
+    const languageRules = rules.filter(rule => rule.language === language);
+    let customHeaderExt: string | undefined;
+    let customSourceExt: string | undefined;
+
+    if (languageRules.length > 0) {
+      // Use the first custom rule's extensions as the standard
+      customHeaderExt = languageRules[0].headerExt;
+      customSourceExt = languageRules[0].sourceExt;
+    }
+
+    // Create adapted default templates that match the custom extensions
+    let adaptedDefaultTemplates: PairingRule[] = [];
+
+    if (customHeaderExt && customSourceExt && language === 'cpp') {
+      // Only adapt C++ templates if we have custom C++ extensions
+      adaptedDefaultTemplates = TEMPLATE_RULES
+        .filter(template => template.language === 'cpp')
+        .filter(template => {
+          // Only include if no custom rule has exactly the same functionality
+          return !languageRules.some(customRule =>
+            customRule.isClass === template.isClass &&
+            customRule.isStruct === template.isStruct &&
+            (customRule.isClass || customRule.isStruct || (!customRule.isClass && !customRule.isStruct && !template.isClass && !template.isStruct))
+          );
+        })
+        .map(template => ({
+          ...template,
+          key: `${template.key}_adapted`,
+          headerExt: customHeaderExt!,
+          sourceExt: customSourceExt!,
+          label: template.label,
+          description: template.description
+            .replace(/\.h\/\.cpp/, `${customHeaderExt}/${customSourceExt}`)
+            .replace(/basic \.h\/\.cpp/, `basic ${customHeaderExt}/${customSourceExt}`)
+            .replace(/Creates a \.h\/\.cpp/, `Creates a ${customHeaderExt}/${customSourceExt}`)
+        }));
+    } else {
+      // If no custom extensions or not C++, use default templates but filter out exact duplicates
+      adaptedDefaultTemplates = TEMPLATE_RULES
+        .filter(template => template.language === language)
+        .filter(template => {
+          return !languageRules.some(customRule =>
+            customRule.headerExt === template.headerExt &&
+            customRule.sourceExt === template.sourceExt &&
+            customRule.isClass === template.isClass &&
+            customRule.isStruct === template.isStruct
+          );
+        });
+    }
+
+    // Add all other language templates (C templates if we're in C++ context, etc.)
+    const otherLanguageTemplates = TEMPLATE_RULES.filter(template => template.language !== language);
+
+    // Clean up custom rules labels and ensure they have proper icons
+    const cleanedCustomRules = rules.map(rule => ({
+      ...rule,
+      label: rule.label.includes('$(') ? rule.label : `$(new-file) ${rule.language === 'cpp' ? 'C++' : 'C'} Pair (${rule.headerExt}/${rule.sourceExt})`,
+      description: rule.description.startsWith('Creates a') ? rule.description : `Creates a ${rule.headerExt}/${rule.sourceExt} file pair with header guards.`
+    }));
+
     // Add option to use default rules or create new ones
     const choices: (PairingRule | { key: string; label: string; description: string; isSpecial: boolean })[] = [
-      ...rules,
-      ...cTemplates,
+      ...cleanedCustomRules,
+      ...adaptedDefaultTemplates,
+      ...otherLanguageTemplates,
       {
         key: 'use_default',
         label: '$(list-unordered) Use Default Templates',
@@ -257,7 +319,7 @@ class PairCreator implements vscode.Disposable {
     // Check if this is a special action (not a rule)
     if ('isSpecial' in result && result.isSpecial) {
       if (result.key === 'use_default') {
-        return undefined; // Fall back to default behavior
+        return 'use_default'; // Special return value to indicate use default templates
       } else if (result.key === 'create_new') {
         return await this.createCustomRules(language);
       }
@@ -352,7 +414,7 @@ class PairCreator implements vscode.Disposable {
     // Create the custom rule
     const customRule: PairingRule = {
       key: `custom_${language}_${Date.now()}`,
-      label: `Custom ${languageName} Pair (${headerExt}/${sourceExt})`,
+      label: `$(new-file) ${language === 'cpp' ? 'C++' : 'C'} Pair (${headerExt}/${sourceExt})`,
       description: `Creates a ${headerExt}/${sourceExt} file pair with header guards.`,
       language: language,
       headerExt: headerExt,
@@ -397,8 +459,11 @@ class PairCreator implements vscode.Disposable {
       return undefined;
     }
 
-    // If checkAndOfferCustomRules returns a rule, use it
-    if (customRulesResult) {
+    // If user chose to use default templates, fall through to default template selection
+    if (customRulesResult === 'use_default') {
+      // Continue to default template selection below
+    } else if (customRulesResult) {
+      // If checkAndOfferCustomRules returns a rule, use it
       return customRulesResult;
     }
 
