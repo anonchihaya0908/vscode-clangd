@@ -139,7 +139,10 @@ class PairCreator implements vscode.Disposable {
     if (ext === '.c') return { language: 'c', uncertain: false };
     if (ext === '.cpp' || ext === '.cc' || ext === '.cxx') return { language: 'cpp', uncertain: false };
 
-    // Strategy 2: For header files (.h), infer language from companion source files
+    // Strategy 1.5: Trust definitive C++ header file extensions
+    if (ext === '.hh' || ext === '.hpp' || ext === '.hxx') return { language: 'cpp', uncertain: false };
+
+    // Strategy 2: For generic header files (.h), infer language from companion source files
     if (ext === '.h') {
       const baseName = path.basename(filePath, '.h');
       const dirPath = path.dirname(filePath);
@@ -290,7 +293,7 @@ class PairCreator implements vscode.Disposable {
       description: rule.description.startsWith('Creates a') ? rule.description : `Creates a ${rule.headerExt}/${rule.sourceExt} file pair with header guards.`
     }));
 
-    // Add option to use default rules or create new ones
+    // Add option to use default rules
     const choices: (PairingRule | { key: string; label: string; description: string; isSpecial: boolean })[] = [
       ...cleanedCustomRules,
       ...adaptedDefaultTemplates,
@@ -300,17 +303,11 @@ class PairCreator implements vscode.Disposable {
         label: '$(list-unordered) Use Default Templates',
         description: 'Use the built-in default pairing rules instead of custom rules',
         isSpecial: true
-      },
-      {
-        key: 'create_new',
-        label: '$(add) Create New Custom Rule',
-        description: `Create a new custom pairing rule for ${language.toUpperCase()}`,
-        isSpecial: true
       }
     ];
 
     const result = await vscode.window.showQuickPick(choices, {
-      placeHolder: `Select a ${language.toUpperCase()} pairing rule or create a new one`,
+      placeHolder: `Select a ${language.toUpperCase()} pairing rule`,
       title: 'Custom Pairing Rules Available'
     });
 
@@ -320,8 +317,6 @@ class PairCreator implements vscode.Disposable {
     if ('isSpecial' in result && result.isSpecial) {
       if (result.key === 'use_default') {
         return 'use_default'; // Special return value to indicate use default templates
-      } else if (result.key === 'create_new') {
-        return await this.createCustomRules(language);
       }
     }
 

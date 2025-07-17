@@ -22,10 +22,10 @@ const CONFIG_KEY = 'createPair.rules';
 // The single source of truth for the extension's default rules.
 // This is used as a fallback when no user or workspace configuration is found.
 export const DEFAULT_TEMPLATE_RULES: ReadonlyArray<PairingRule> = [
-    { key: 'cpp_empty', label: 'Empty C++ Pair', description: 'Creates basic .h/.cpp files.', language: 'cpp', headerExt: '.h', sourceExt: '.cpp' },
+    { key: 'cpp_empty', label: 'C++ Pair', description: 'Creates basic .h/.cpp files.', language: 'cpp', headerExt: '.h', sourceExt: '.cpp' },
     { key: 'cpp_class', label: 'C++ Class', description: 'Creates a .h/.cpp pair with a class boilerplate.', language: 'cpp', headerExt: '.h', sourceExt: '.cpp', isClass: true },
     { key: 'cpp_struct', label: 'C++ Struct', description: 'Creates a .h/.cpp pair with a struct boilerplate.', language: 'cpp', headerExt: '.h', sourceExt: '.cpp', isStruct: true },
-    { key: 'c_empty', label: 'Empty C Pair', description: 'Creates basic .h/.c files for functions.', language: 'c', headerExt: '.h', sourceExt: '.c' },
+    { key: 'c_empty', label: 'C Pair', description: 'Creates basic .h/.c files for functions.', language: 'c', headerExt: '.h', sourceExt: '.c' },
     { key: 'c_struct', label: 'C Struct', description: 'Creates a .h/.c pair with a typedef struct.', language: 'c', headerExt: '.h', sourceExt: '.c', isStruct: true }
 ];
 
