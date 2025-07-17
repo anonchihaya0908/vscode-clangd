@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import * as os from 'os';
 
 import { ClangdContext } from './clangd-context';
-import * as PairingRuleService from './pairing-rule-service';
+import { PairingRuleService, PairingRule } from './pairing-rule-manager';
 
 // --- Constants and Types ---
 
@@ -20,18 +20,6 @@ const DEFAULT_PLACEHOLDERS = {
   CPP_CLASS: 'MyClass',
   CPP_STRUCT: 'MyStruct'
 } as const;
-
-// Defines the structure of a file pair template rule
-interface PairingRule {
-  key: string;           // Unique identifier for this rule
-  label: string;         // Human-readable name shown in UI
-  description: string;   // Detailed description of what this rule creates
-  language: 'c' | 'cpp'; // Target programming language
-  headerExt: string;     // File extension for header file (e.g., '.h')
-  sourceExt: string;     // File extension for source file (e.g., '.cpp', '.c')
-  isClass?: boolean;     // Whether this rule creates a class template
-  isStruct?: boolean;    // Whether this rule creates a struct template
-}
 
 // Available template rules for creating different types of file pairs
 const TEMPLATE_RULES: ReadonlyArray<PairingRule> = [
