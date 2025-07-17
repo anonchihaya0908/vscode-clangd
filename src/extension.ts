@@ -8,6 +8,7 @@ import {get, update} from './config';
 import {
   registerCreateSourceHeaderPairCommand
 } from './create-source-header-pair';
+import { showConfigurationWizard } from './pairing-rule-ui';
 
 let apiInstance: ClangdExtensionImpl|undefined;
 
@@ -112,7 +113,12 @@ export async function activate(context: vscode.ExtensionContext):
       }
     }, 5000);
   }
-
+context.subscriptions.push(
+  vscode.commands.registerCommand(
+    'clangd.createPair.configureRules', 
+    showConfigurationWizard
+  )
+);
   apiInstance = new ClangdExtensionImpl(clangdContext?.client);
   return apiInstance;
 }
