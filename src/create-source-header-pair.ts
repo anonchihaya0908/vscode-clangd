@@ -440,15 +440,62 @@ class PairCreator implements vscode.Disposable {
     });
 
     if (result && !uncertain && language !== result.language) {
-      const detectedLangName = language === 'c' ? 'C' : 'C++';
-      const selectedLangName = result.language === 'c' ? 'C' : 'C++';
+      // Check if there are any C++ source files in the same directory
+      const activeEditor = vscode.window.activeTextEditor;
+      let shouldShowWarning = true;
 
-      const shouldContinue = await vscode.window.showWarningMessage(
-        `You're working in a ${detectedLangName} file but selected a ${selectedLangName} template. This may create files with incompatible extensions or content.`,
-        'Continue Anyway', 'Cancel'
-      );
+      if (activeEditor && !activeEditor.document.isUntitled) {
+        const currentFilePath = activeEditor.document.uri.fsPath;
+        const currentDir = path.dirname(currentFilePath);
 
-      if (shouldContinue !== 'Continue Anyway') return undefined;
+        // When detected language is C but user selected C++, check for any C++ files in directory
+        if (language === 'c' && result.language === 'cpp') {
+          try {
+            const dirEntries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(currentDir));
+            const hasCppFiles = dirEntries.some(([fileName, fileType]) => {
+              if (fileType === vscode.FileType.File) {
+                const ext = path.extname(fileName);
+                return ['.cpp', '.cc', '.cxx'].includes(ext);
+              }
+              return false;
+            });
+
+            // Only show warning if no C++ source files found in directory
+            shouldShowWarning = !hasCppFiles;
+          } catch {
+            // If we can't check, show warning to be safe
+            shouldShowWarning = true;
+          }
+        } else {
+          // For other cases (C++ detected but C selected), use original logic
+          const baseName = path.basename(currentFilePath, path.extname(currentFilePath));
+          const expectedSourceExts = language === 'c' ? ['.c'] : ['.cpp', '.cc', '.cxx'];
+
+          const sourceFileChecks = expectedSourceExts.map(ext =>
+            vscode.workspace.fs.stat(vscode.Uri.file(path.join(currentDir, `${baseName}${ext}`)))
+          );
+
+          try {
+            const results = await Promise.allSettled(sourceFileChecks);
+            const hasCorrespondingSource = results.some(result => result.status === 'fulfilled');
+            shouldShowWarning = !hasCorrespondingSource;
+          } catch {
+            shouldShowWarning = true;
+          }
+        }
+      }
+
+      if (shouldShowWarning) {
+        const detectedLangName = language === 'c' ? 'C' : 'C++';
+        const selectedLangName = result.language === 'c' ? 'C' : 'C++';
+
+        const shouldContinue = await vscode.window.showWarningMessage(
+          `You're working in a ${detectedLangName} file but selected a ${selectedLangName} template. This may create files with incompatible extensions or content.`,
+          'Continue Anyway', 'Cancel'
+        );
+
+        if (shouldContinue !== 'Continue Anyway') return undefined;
+      }
     }
 
     return result;
