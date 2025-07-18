@@ -160,9 +160,7 @@ class PairCreatorService {
   });
 
   // Clear cache when needed (e.g., when files change)
-  private static clearCache(): void {
-    this.fileStatCache.clear();
-  }
+  private static clearCache(): void { this.fileStatCache.clear(); }
 
   // Optimized file existence check with caching
   private static async fileExists(filePath: string): Promise<boolean> {
@@ -170,10 +168,9 @@ class PairCreatorService {
       return this.fileStatCache.get(filePath)!;
     }
 
-    const promise = Promise.resolve(
-      vscode.workspace.fs.stat(vscode.Uri.file(filePath))
-        .then(() => true, () => false)
-    );
+    const promise =
+      Promise.resolve(vscode.workspace.fs.stat(vscode.Uri.file(filePath))
+        .then(() => true, () => false));
 
     this.fileStatCache.set(filePath, promise);
 
@@ -183,8 +180,9 @@ class PairCreatorService {
     return promise;
   }
 
-  /** Detects programming language with optimized logic */
-  public async detectLanguage(): Promise<{ language: Language, uncertain: boolean }> {
+  // Detects programming language with optimized logic
+  public async detectLanguage():
+    Promise<{ language: Language, uncertain: boolean }> {
     const activeEditor = vscode.window.activeTextEditor;
     if (!activeEditor?.document || activeEditor.document.isUntitled) {
       return { language: 'cpp', uncertain: true };
@@ -204,19 +202,22 @@ class PairCreatorService {
     // Special handling for .h files with companion file detection
     if (ext === '.h') {
       const result = await this.detectLanguageForHeaderFile(fsPath);
-      if (result) return result;
+      if (result)
+        return result;
     }
 
     // Fallback to VS Code language detection
     return { language: languageId === 'c' ? 'c' : 'cpp', uncertain: true };
   }
 
-  /** Optimized header file language detection */
-  private async detectLanguageForHeaderFile(filePath: string): Promise<{ language: Language, uncertain: boolean } | null> {
+  // Optimized header file language detection
+  private async detectLanguageForHeaderFile(filePath: string):
+    Promise<{ language: Language, uncertain: boolean } | null> {
     const baseName = path.basename(filePath, '.h');
     const dirPath = path.dirname(filePath);
 
-    // Check for C companion file first (less common, check first for early exit)
+    // Check for C companion file first (less common, check first for early
+    // exit)
     const cFile = path.join(dirPath, `${baseName}.c`);
     if (await PairCreatorService.fileExists(cFile)) {
       return { language: 'c', uncertain: false };
@@ -224,9 +225,9 @@ class PairCreatorService {
 
     // Check for C++ companion files in parallel
     const cppExtensions = ['.cpp', '.cc', '.cxx'];
-    const cppChecks = cppExtensions.map(ext =>
-      PairCreatorService.fileExists(path.join(dirPath, `${baseName}${ext}`))
-    );
+    const cppChecks =
+      cppExtensions.map(ext => PairCreatorService.fileExists(
+        path.join(dirPath, `${baseName}${ext}`)));
 
     const results = await Promise.all(cppChecks);
     if (results.some(exists => exists)) {
@@ -236,45 +237,40 @@ class PairCreatorService {
     return { language: 'cpp', uncertain: true };
   }
 
-  /** Adapts template rules with improved performance */
-  public adaptRuleForCurrentExtensions(rule: PairingRule, detectedLanguage: Language): PairingRule {
-    if (rule.language !== 'cpp') return rule;
-
-    // Use nullish coalescing for cleaner code
-    const allRules = [
+  // Gets all available pairing rules (custom + workspace + user)
+  public getAllPairingRules(): PairingRule[] {
+    return [
       ...(PairingRuleService.getRules('workspace') ?? []),
       ...(PairingRuleService.getRules('user') ?? [])
     ];
-
-    const cppCustomRule = allRules.find(r => r.language === 'cpp');
-    if (!cppCustomRule) return rule;
-
-    const { headerExt, sourceExt } = cppCustomRule;
-
-    // Use more efficient string replacement with proper typing
-    const replacementPattern = /Header\/Source|\.h(?:h|pp|xx)?\/\.c(?:pp|c|xx)?/g;
-    const newDescription = rule.description.replace(replacementPattern, `${headerExt}/${sourceExt}`);
-
-    return { ...rule, description: newDescription, headerExt, sourceExt };
   }
 
-  /** Converts string to PascalCase efficiently */
+  // Gets custom C++ extensions if available
+  public getCustomCppExtensions(): { headerExt: string, sourceExt: string } | null {
+    const allRules = this.getAllPairingRules();
+    const cppCustomRule = allRules.find(r => r.language === 'cpp');
+    return cppCustomRule ? {
+      headerExt: cppCustomRule.headerExt,
+      sourceExt: cppCustomRule.sourceExt
+    }
+      : null;
+  }
+
+  // Converts string to PascalCase efficiently
   public toPascalCase(input: string): string {
-    return input
-      .split(/[-_]+/)
+    return input.split(/[-_]+/)
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join('');
   }
 
-  /** Gets placeholder name with caching for active file */
+  // Gets placeholder name with caching for active file
   public getPlaceholder(rule: PairingRule): string {
     const activeEditor = vscode.window.activeTextEditor;
 
     if (activeEditor?.document && !activeEditor.document.isUntitled) {
-      const fileName = path.basename(
-        activeEditor.document.fileName,
-        path.extname(activeEditor.document.fileName)
-      );
+      const fileName =
+        path.basename(activeEditor.document.fileName,
+          path.extname(activeEditor.document.fileName));
       return rule.language === 'c' ? fileName : this.toPascalCase(fileName);
     }
 
@@ -284,33 +280,31 @@ class PairCreatorService {
     }
 
     if (rule.isStruct) {
-      return rule.language === 'cpp'
-        ? DEFAULT_PLACEHOLDERS.CPP_STRUCT
+      return rule.language === 'cpp' ? DEFAULT_PLACEHOLDERS.CPP_STRUCT
         : DEFAULT_PLACEHOLDERS.C_STRUCT;
     }
 
-    return rule.language === 'c'
-      ? DEFAULT_PLACEHOLDERS.C_EMPTY
+    return rule.language === 'c' ? DEFAULT_PLACEHOLDERS.C_EMPTY
       : DEFAULT_PLACEHOLDERS.CPP_EMPTY;
   }
 
-  /** Optimized line ending detection */
+  // Optimized line ending detection
   public getLineEnding(): string {
-    const eolSetting = vscode.workspace.getConfiguration('files').get<string>('eol');
+    const eolSetting =
+      vscode.workspace.getConfiguration('files').get<string>('eol');
 
-    return eolSetting === '\n' || eolSetting === '\r\n'
-      ? eolSetting
-      : process.platform === 'win32' ? '\r\n' : '\n';
+    return eolSetting === '\n' || eolSetting === '\r\n' ? eolSetting
+      : process.platform === 'win32' ? '\r\n'
+        : '\n';
   }
 
-  /** Generates file content with improved template selection */
-  public generateFileContent(fileName: string, eol: string, rule: PairingRule): {
-    headerContent: string;
-    sourceContent: string;
-  } {
-    const templateKey: TemplateKey = rule.isClass ? 'CPP_CLASS'
-      : rule.isStruct ? (rule.language === 'cpp' ? 'CPP_STRUCT' : 'C_STRUCT')
-        : rule.language === 'c' ? 'C_EMPTY' : 'CPP_EMPTY';
+  // Generates file content with improved template selection
+  public generateFileContent(fileName: string, eol: string, rule: PairingRule): { headerContent: string; sourceContent: string; } {
+    const templateKey: TemplateKey =
+      rule.isClass ? 'CPP_CLASS'
+        : rule.isStruct ? (rule.language === 'cpp' ? 'CPP_STRUCT' : 'C_STRUCT')
+          : rule.language === 'c' ? 'C_EMPTY'
+            : 'CPP_EMPTY';
 
     const templates = FILE_TEMPLATES[templateKey];
     const context = Object.freeze({
@@ -328,14 +322,17 @@ class PairCreatorService {
     };
   }
 
-  /** Optimized template variable substitution */
-  private applyTemplate(template: string, context: Record<string, string>): string {
+  // Optimized template variable substitution
+  private applyTemplate(template: string,
+    context: Record<string, string>): string {
     // Pre-compile regex for better performance if used frequently
     return template.replace(/\{\{(\w+)\}\}/g, (_, key) => context[key] ?? '');
   }
 
-  /** File existence check with parallel processing */
-  public async checkFileExistence(headerPath: vscode.Uri, sourcePath: vscode.Uri): Promise<string | null> {
+  // File existence check with parallel processing
+  public async checkFileExistence(headerPath: vscode.Uri,
+    sourcePath: vscode.Uri):
+    Promise<string | null> {
     const checks = [headerPath, sourcePath].map(async (uri) => {
       try {
         await vscode.workspace.fs.stat(uri);
@@ -349,24 +346,23 @@ class PairCreatorService {
     return results.find(path => path !== null) ?? null;
   }
 
-  /** Optimized file writing with error handling */
-  public async writeFiles(
-    headerPath: vscode.Uri,
-    sourcePath: vscode.Uri,
+  // Optimized file writing with error handling
+  public async writeFiles(headerPath: vscode.Uri, sourcePath: vscode.Uri,
     headerContent: string,
-    sourceContent: string
-  ): Promise<void> {
+    sourceContent: string): Promise<void> {
     try {
       await Promise.all([
-        vscode.workspace.fs.writeFile(headerPath, Buffer.from(headerContent, 'utf8')),
-        vscode.workspace.fs.writeFile(sourcePath, Buffer.from(sourceContent, 'utf8'))
+        vscode.workspace.fs.writeFile(headerPath,
+          Buffer.from(headerContent, 'utf8')),
+        vscode.workspace.fs.writeFile(sourcePath,
+          Buffer.from(sourceContent, 'utf8'))
       ]);
     } catch (error) {
       throw new Error(`Failed to create files: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
-  /** Smart target directory detection */
+  // Smart target directory detection
   public async getTargetDirectory(): Promise<vscode.Uri | undefined> {
     const activeEditor = vscode.window.activeTextEditor;
 
@@ -384,17 +380,18 @@ class PairCreatorService {
 
     // Let user choose from multiple workspace folders
     if (workspaceFolders && workspaceFolders.length > 1) {
-      const selected = await vscode.window.showWorkspaceFolderPick({
-        placeHolder: 'Select workspace folder for new files'
-      });
+      const selected = await vscode.window.showWorkspaceFolderPick(
+        { placeHolder: 'Select workspace folder for new files' });
       return selected?.uri;
     }
 
     return undefined;
   }
 
-  /** Optimized language mismatch warning logic */
-  public async shouldShowLanguageMismatchWarning(language: Language, result: PairingRule): Promise<boolean> {
+  // Optimized language mismatch warning logic
+  public async shouldShowLanguageMismatchWarning(language: Language,
+    result: PairingRule):
+    Promise<boolean> {
     const activeEditor = vscode.window.activeTextEditor;
     if (!activeEditor?.document || activeEditor.document.isUntitled) {
       return true;
@@ -406,35 +403,39 @@ class PairCreatorService {
       return this.checkForCppFilesInDirectory(currentDir);
     }
 
-    return this.checkForCorrespondingSourceFiles(currentDir, activeEditor.document.uri.fsPath, language);
+    return this.checkForCorrespondingSourceFiles(
+      currentDir, activeEditor.document.uri.fsPath, language);
   }
 
-  /** Check for C++ files in directory */
+  // Check for C++ files in directory
   private async checkForCppFilesInDirectory(dirPath: string): Promise<boolean> {
     try {
-      const entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(dirPath));
-      const hasCppFiles = entries.some(([fileName, fileType]) =>
-        fileType === vscode.FileType.File &&
-        PairCreatorService.DEFINITIVE_EXTENSIONS.cpp.has(path.extname(fileName))
-      );
+      const entries =
+        await vscode.workspace.fs.readDirectory(vscode.Uri.file(dirPath));
+      const hasCppFiles =
+        entries.some(([fileName, fileType]) =>
+          fileType === vscode.FileType.File &&
+          PairCreatorService.DEFINITIVE_EXTENSIONS.cpp.has(
+            path.extname(fileName)));
       return !hasCppFiles; // Show warning if NO C++ files found
     } catch {
       return true; // Show warning if can't check
     }
   }
 
-  /** Check for corresponding source files */
-  private async checkForCorrespondingSourceFiles(dirPath: string, filePath: string, language: Language): Promise<boolean> {
+  // Check for corresponding source files
+  private async checkForCorrespondingSourceFiles(
+    dirPath: string, filePath: string, language: Language): Promise<boolean> {
     const baseName = path.basename(filePath, path.extname(filePath));
     const extensions = language === 'c' ? ['.c'] : ['.cpp', '.cc', '.cxx'];
 
-    const checks = extensions.map(ext =>
-      PairCreatorService.fileExists(path.join(dirPath, `${baseName}${ext}`))
-    );
+    const checks = extensions.map(ext => PairCreatorService.fileExists(
+      path.join(dirPath, `${baseName}${ext}`)));
 
     try {
       const results = await Promise.all(checks);
-      return !results.some(exists => exists); // Show warning if NO corresponding files found
+      return !results.some(
+        exists => exists); // Show warning if NO corresponding files found
     } catch {
       return true; // Show warning if can't check
     }
@@ -450,57 +451,60 @@ class PairCreatorUI {
 
   constructor(service: PairCreatorService) { this.service = service; }
 
-  // Checks for existing custom pairing rules and offers to create them if not
-  // found. For C++, presents options to use custom rules or create new ones.
-  // For C, always uses default templates.
-  // @param language - The detected programming language
-  // @param uncertain - Whether language detection was uncertain
-  // @returns Selected rule, null if cancelled, undefined for defaults, or
-  // 'use_default' flag
-  public async checkAndOfferCustomRules(language: 'c' | 'cpp',
-    uncertain: boolean):
-    Promise<PairingRule | null | undefined | 'use_default'> {
-    if (language === 'c')
-      return undefined; // Always use default C templates
-
-    const allRules = [
-      ...(PairingRuleService.getRules('workspace') || []),
-      ...(PairingRuleService.getRules('user') || [])
-    ];
-    const languageRules = allRules.filter(rule => rule.language === language);
-
-    if (languageRules.length > 0) {
-      const result = await this.selectFromCustomRules(languageRules, language);
-      return result === undefined ? null : result;
+  // Adapts template rules for display in UI based on custom extensions
+  private adaptRuleForDisplay(rule: PairingRule): PairingRule {
+    if (rule.language !== 'cpp') {
+      return rule;
     }
 
-    if (!uncertain) {
-      const shouldCreateRules = await this.offerToCreateCustomRules(language);
-      if (shouldCreateRules === null)
-        return null;
-      if (shouldCreateRules) {
-        const result = await this.createCustomRules(language);
-        return result === undefined ? null : result;
-      }
+    const customExtensions = this.service.getCustomCppExtensions();
+    if (!customExtensions) {
+      return rule;
     }
 
-    return undefined;
+    const { headerExt, sourceExt } = customExtensions;
+
+    // Adapt description for display
+    const replacementPattern =
+      /Header\/Source|\.h(?:h|pp|xx)?\/\.c(?:pp|c|xx)?/g;
+    const newDescription = rule.description.replace(
+      replacementPattern, `${headerExt}/${sourceExt}`);
+
+    return { ...rule, description: newDescription, headerExt, sourceExt };
   }
 
-  // Presents a selection dialog for custom pairing rules.
-  // Combines custom rules with adapted default templates and cross-language
-  // options.
-  // @param rules - Available custom pairing rules
-  // @param language - The current programming language context
-  // @returns Selected rule, undefined if cancelled, or 'use_default' flag
-  public async selectFromCustomRules(rules: PairingRule[], language: 'c' | 'cpp'):
-    Promise<PairingRule | undefined | 'use_default'> {
-    const languageRules = rules.filter(rule => rule.language === language);
+  // Prepares template choices for UI display with proper ordering and
+  // adaptation
+  private prepareTemplateChoices(language: 'c' | 'cpp',
+    uncertain: boolean): PairingRule[] {
+    const desiredOrder =
+      uncertain
+        ? ['cpp_empty', 'c_empty', 'cpp_class', 'cpp_struct', 'c_struct']
+        : language === 'c'
+          ? ['c_empty', 'c_struct', 'cpp_empty', 'cpp_class', 'cpp_struct']
+          : ['cpp_empty', 'cpp_class', 'cpp_struct', 'c_empty', 'c_struct'];
+
+    return [...TEMPLATE_RULES]
+      .sort((a, b) =>
+        desiredOrder.indexOf(a.key) - desiredOrder.indexOf(b.key))
+      .map(rule => this.adaptRuleForDisplay(rule));
+  }
+
+  // Filters custom rules by language and prepares them for display
+  private prepareCustomRulesChoices(allRules: PairingRule[],
+    language: 'c' | 'cpp'): {
+      languageRules: PairingRule[],
+      adaptedDefaultTemplates: PairingRule[],
+      otherLanguageTemplates: PairingRule[],
+      cleanedCustomRules: PairingRule[]
+    } {
+    const languageRules = allRules.filter(rule => rule.language === language);
     const customExt = languageRules.length > 0 ? languageRules[0] : null;
 
     let adaptedDefaultTemplates: PairingRule[] = [];
 
     if (customExt && language === 'cpp') {
+      // For C++, adapt default templates with custom extensions
       adaptedDefaultTemplates =
         TEMPLATE_RULES
           .filter(
@@ -531,6 +535,7 @@ class PairCreatorUI {
                     `Creates a ${customExt.headerExt}/${customExt.sourceExt}`)
             }));
     } else {
+      // Standard adaptation for non-custom or C language
       adaptedDefaultTemplates =
         TEMPLATE_RULES
           .filter(template =>
@@ -541,16 +546,14 @@ class PairCreatorUI {
                 customRule.sourceExt === template.sourceExt &&
                 customRule.isClass === template.isClass &&
                 customRule.isStruct === template.isStruct))
-          .map(template => this.service.adaptRuleForCurrentExtensions(
-            template, language));
+          .map(template => this.adaptRuleForDisplay(template));
     }
 
     const otherLanguageTemplates =
       TEMPLATE_RULES.filter(template => template.language !== language)
-        .map(template => this.service.adaptRuleForCurrentExtensions(
-          template, language));
+        .map(template => this.adaptRuleForDisplay(template));
 
-    const cleanedCustomRules = rules.map(
+    const cleanedCustomRules = allRules.map(
       rule => ({
         ...rule,
         label: rule.label.includes('$(')
@@ -560,6 +563,64 @@ class PairCreatorUI {
           ? rule.description
           : `Creates a ${rule.headerExt}/${rule.sourceExt} file pair with header guards.`
       }));
+
+    return {
+      languageRules,
+      adaptedDefaultTemplates,
+      otherLanguageTemplates,
+      cleanedCustomRules
+    };
+  }
+
+  // Checks for existing custom pairing rules and offers to create them if not
+  // found. For C++, presents options to use custom rules or create new ones.
+  // For C, always uses default templates.
+  // @param language - The detected programming language
+  // @param uncertain - Whether language detection was uncertain
+  // @returns Selected rule, null if cancelled, undefined for defaults, or
+  // 'use_default' flag
+  public async checkAndOfferCustomRules(language: 'c' | 'cpp',
+    uncertain: boolean):
+    Promise<PairingRule | null | undefined | 'use_default'> {
+    if (language === 'c')
+      return undefined; // Always use default C templates
+
+    const allRules = this.service.getAllPairingRules();
+    const languageRules = allRules.filter(rule => rule.language === language);
+
+    if (languageRules.length > 0) {
+      const result = await this.selectFromCustomRules(allRules, language);
+      return result === undefined ? null : result;
+    }
+
+    if (!uncertain) {
+      const shouldCreateRules = await this.offerToCreateCustomRules(language);
+      if (shouldCreateRules === null)
+        return null;
+      if (shouldCreateRules) {
+        const result = await this.createCustomRules(language);
+        return result === undefined ? null : result;
+      }
+    }
+
+    return undefined;
+  }
+
+  // Presents a selection dialog for custom pairing rules.
+  // Combines custom rules with adapted default templates and cross-language
+  // options.
+  // @param allRules - All available custom pairing rules
+  // @param language - The current programming language context
+  // @returns Selected rule, undefined if cancelled, or 'use_default' flag
+  public async selectFromCustomRules(allRules: PairingRule[],
+    language: 'c' | 'cpp'):
+    Promise<PairingRule | undefined | 'use_default'> {
+
+    const {
+      cleanedCustomRules,
+      adaptedDefaultTemplates,
+      otherLanguageTemplates
+    } = this.prepareCustomRulesChoices(allRules, language);
 
     const choices = [
       ...cleanedCustomRules, ...adaptedDefaultTemplates,
@@ -730,18 +791,7 @@ class PairCreatorUI {
       return customRulesResult;
     }
 
-    const desiredOrder =
-      uncertain
-        ? ['cpp_empty', 'c_empty', 'cpp_class', 'cpp_struct', 'c_struct']
-        : language === 'c'
-          ? ['c_empty', 'c_struct', 'cpp_empty', 'cpp_class', 'cpp_struct']
-          : ['cpp_empty', 'cpp_class', 'cpp_struct', 'c_empty', 'c_struct'];
-
-    const choices = [...TEMPLATE_RULES]
-      .sort((a, b) => desiredOrder.indexOf(a.key) -
-        desiredOrder.indexOf(b.key))
-      .map(rule => this.service.adaptRuleForCurrentExtensions(
-        rule, language));
+    const choices = this.prepareTemplateChoices(language, uncertain);
 
     const result = await vscode.window.showQuickPick(choices, {
       placeHolder: 'Please select the type of file pair to create.',
@@ -759,9 +809,9 @@ class PairCreatorUI {
 
         const shouldContinue = await vscode.window.showWarningMessage(
           `You're working in a ${detectedLangName} file but selected a ${selectedLangName} template. This may create files with incompatible extensions or content.`,
-          'Continue Anyway', 'Cancel');
+          'Continue', 'Cancel');
 
-        if (shouldContinue !== 'Continue Anyway')
+        if (shouldContinue !== 'Continue')
           return undefined;
       }
     }
