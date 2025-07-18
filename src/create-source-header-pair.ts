@@ -180,16 +180,16 @@ class PairCreatorService {
     return promise;
   }
 
-  // Detects programming language with optimized logic
-  public async detectLanguage():
-    Promise<{ language: Language, uncertain: boolean }> {
-    const activeEditor = vscode.window.activeTextEditor;
-    if (!activeEditor?.document || activeEditor.document.isUntitled) {
+  /** Detects programming language from file info (pure business logic) */
+  public async detectLanguage(
+    languageId?: string,
+    filePath?: string
+  ): Promise<{ language: Language, uncertain: boolean }> {
+    if (!languageId || !filePath) {
       return { language: 'cpp', uncertain: true };
     }
 
-    const { languageId, uri: { fsPath } } = activeEditor.document;
-    const ext = path.extname(fsPath);
+    const ext = path.extname(filePath);
 
     // Fast path for definitive extensions
     if (PairCreatorService.DEFINITIVE_EXTENSIONS.c.has(ext)) {
@@ -201,12 +201,11 @@ class PairCreatorService {
 
     // Special handling for .h files with companion file detection
     if (ext === '.h') {
-      const result = await this.detectLanguageForHeaderFile(fsPath);
-      if (result)
-        return result;
+      const result = await this.detectLanguageForHeaderFile(filePath);
+      if (result) return result;
     }
 
-    // Fallback to VS Code language detection
+    // Fallback to language ID
     return { language: languageId === 'c' ? 'c' : 'cpp', uncertain: true };
   }
 
@@ -256,25 +255,15 @@ class PairCreatorService {
       : null;
   }
 
-  // Converts string to PascalCase efficiently
+  /** Converts string to PascalCase efficiently (pure function) */
   public toPascalCase(input: string): string {
     return input.split(/[-_]+/)
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join('');
   }
 
-  // Gets placeholder name with caching for active file
-  public getPlaceholder(rule: PairingRule): string {
-    const activeEditor = vscode.window.activeTextEditor;
-
-    if (activeEditor?.document && !activeEditor.document.isUntitled) {
-      const fileName =
-        path.basename(activeEditor.document.fileName,
-          path.extname(activeEditor.document.fileName));
-      return rule.language === 'c' ? fileName : this.toPascalCase(fileName);
-    }
-
-    // Use conditional logic for defaults instead of lookup table
+  /** Gets default placeholder based on rule type (pure function) */
+  public getDefaultPlaceholder(rule: PairingRule): string {
     if (rule.isClass) {
       return DEFAULT_PLACEHOLDERS.CPP_CLASS;
     }
@@ -362,49 +351,38 @@ class PairCreatorService {
     }
   }
 
-  // Smart target directory detection
-  public async getTargetDirectory(): Promise<vscode.Uri | undefined> {
-    const activeEditor = vscode.window.activeTextEditor;
-
+  /** Smart target directory detection (pure business logic) */
+  public async getTargetDirectory(activeDocumentPath?: string, workspaceFolders?: readonly vscode.WorkspaceFolder[]): Promise<vscode.Uri | undefined> {
     // Prefer current file's directory
-    if (activeEditor?.document && !activeEditor.document.isUntitled) {
-      return vscode.Uri.file(path.dirname(activeEditor.document.uri.fsPath));
+    if (activeDocumentPath) {
+      return vscode.Uri.file(path.dirname(activeDocumentPath));
     }
-
-    const workspaceFolders = vscode.workspace.workspaceFolders;
 
     // Return single workspace folder directly
     if (workspaceFolders?.length === 1) {
       return workspaceFolders[0].uri;
     }
 
-    // Let user choose from multiple workspace folders
-    if (workspaceFolders && workspaceFolders.length > 1) {
-      const selected = await vscode.window.showWorkspaceFolderPick(
-        { placeHolder: 'Select workspace folder for new files' });
-      return selected?.uri;
-    }
-
+    // Multiple workspace folders require UI selection
     return undefined;
   }
 
-  // Optimized language mismatch warning logic
-  public async shouldShowLanguageMismatchWarning(language: Language,
-    result: PairingRule):
-    Promise<boolean> {
-    const activeEditor = vscode.window.activeTextEditor;
-    if (!activeEditor?.document || activeEditor.document.isUntitled) {
+  /** Language mismatch warning logic (pure business logic) */
+  public async shouldShowLanguageMismatchWarning(
+    language: Language,
+    result: PairingRule,
+    currentDir?: string,
+    activeFilePath?: string
+  ): Promise<boolean> {
+    if (!currentDir || !activeFilePath) {
       return true;
     }
-
-    const currentDir = path.dirname(activeEditor.document.uri.fsPath);
 
     if (language === 'c' && result.language === 'cpp') {
       return this.checkForCppFilesInDirectory(currentDir);
     }
 
-    return this.checkForCorrespondingSourceFiles(
-      currentDir, activeEditor.document.uri.fsPath, language);
+    return this.checkForCorrespondingSourceFiles(currentDir, activeFilePath, language);
   }
 
   // Check for C++ files in directory
@@ -450,6 +428,72 @@ class PairCreatorUI {
   private service: PairCreatorService;
 
   constructor(service: PairCreatorService) { this.service = service; }
+
+  /** Gets placeholder name for input dialog, considering active file context */
+  private getPlaceholder(rule: PairingRule): string {
+    const activeEditor = vscode.window.activeTextEditor;
+
+    if (activeEditor?.document && !activeEditor.document.isUntitled) {
+      const fileName = path.basename(
+        activeEditor.document.fileName,
+        path.extname(activeEditor.document.fileName)
+      );
+      return rule.language === 'c'
+        ? fileName
+        : this.service.toPascalCase(fileName);
+    }
+
+    return this.service.getDefaultPlaceholder(rule);
+  }
+
+  /** Gets target directory with UI fallback for multiple workspace folders */
+  public async getTargetDirectory(): Promise<vscode.Uri | undefined> {
+    const activeEditor = vscode.window.activeTextEditor;
+    const activeDocumentPath = activeEditor?.document && !activeEditor.document.isUntitled
+      ? activeEditor.document.uri.fsPath
+      : undefined;
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+
+    // Try service layer first
+    const result = await this.service.getTargetDirectory(activeDocumentPath, workspaceFolders);
+    if (result) {
+      return result;
+    }
+
+    // Handle multiple workspace folders with UI
+    if (workspaceFolders && workspaceFolders.length > 1) {
+      const selected = await vscode.window.showWorkspaceFolderPick({
+        placeHolder: 'Select workspace folder for new files'
+      });
+      return selected?.uri;
+    }
+
+    return undefined;
+  }
+
+  /** Checks if language mismatch warning should be shown with UI context */
+  private async shouldShowLanguageMismatchWarning(language: Language, result: PairingRule): Promise<boolean> {
+    const activeEditor = vscode.window.activeTextEditor;
+    const currentDir = activeEditor?.document && !activeEditor.document.isUntitled
+      ? path.dirname(activeEditor.document.uri.fsPath)
+      : undefined;
+    const activeFilePath = activeEditor?.document && !activeEditor.document.isUntitled
+      ? activeEditor.document.uri.fsPath
+      : undefined;
+
+    return this.service.shouldShowLanguageMismatchWarning(language, result, currentDir, activeFilePath);
+  }
+
+  /** Detects programming language from active editor */
+  public async detectLanguage(): Promise<{ language: Language, uncertain: boolean }> {
+    const activeEditor = vscode.window.activeTextEditor;
+    const languageId = activeEditor?.document?.languageId;
+    const filePath = activeEditor?.document && !activeEditor.document.isUntitled
+      ? activeEditor.document.uri.fsPath
+      : undefined;
+
+    return this.service.detectLanguage(languageId, filePath);
+  }
 
   // Adapts template rules for display in UI based on custom extensions
   private adaptRuleForDisplay(rule: PairingRule): PairingRule {
@@ -799,9 +843,7 @@ class PairCreatorUI {
     });
 
     if (result && !uncertain && language !== result.language) {
-      const shouldShowWarning =
-        await this.service.shouldShowLanguageMismatchWarning(language,
-          result);
+      const shouldShowWarning = await this.shouldShowLanguageMismatchWarning(language, result);
 
       if (shouldShowWarning) {
         const detectedLangName = language === 'c' ? 'C' : 'C++';
@@ -832,7 +874,7 @@ class PairCreatorUI {
 
     return vscode.window.showInputBox({
       prompt,
-      placeHolder: this.service.getPlaceholder(rule),
+      placeHolder: this.getPlaceholder(rule),
       validateInput: (text) =>
         VALIDATION_PATTERNS.IDENTIFIER.test(text?.trim() || '')
           ? null
@@ -878,14 +920,14 @@ class PairCreator implements vscode.Disposable {
   // Orchestrates the entire workflow using the service and UI layers.
   public async create(): Promise<void> {
     try {
-      const targetDirectory = await this.service.getTargetDirectory();
+      const targetDirectory = await this.ui.getTargetDirectory();
       if (!targetDirectory) {
         vscode.window.showErrorMessage(
           'Cannot determine target directory. Please open a folder or a file first.');
         return;
       }
 
-      const { language, uncertain } = await this.service.detectLanguage();
+      const { language, uncertain } = await this.ui.detectLanguage();
       const rule = await this.ui.promptForPairingRule(language, uncertain);
       if (!rule)
         return;
