@@ -1,79 +1,136 @@
+//
+// File Pair Creation Module for VS Code clangd Extension
+// 
+// OVERVIEW:
+// This module implements a sophisticated file pair creation system for C/C++ projects.
+// It allows users to quickly generate matched header (.h) and source (.c/.cpp) files
+// with proper boilerplate code, header guards, and language-specific templates.
+// 
+// ARCHITECTURE:
+// The module follows a clean three-layer architecture pattern:
+// 
+// 1. SERVICE LAYER (PairCreatorService):
+//    - Pure business logic and data processing
+//    - Language detection algorithms
+//    - Template generation and file content creation
+//    - File system utilities with caching
+//    - No VS Code API dependencies (pure functions with dependency injection)
+// 
+// 2. UI LAYER (PairCreatorUI):
+//    - User interface interactions and dialogs
+//    - Input validation and user feedback
+//    - VS Code API integrations (showQuickPick, showInputBox, etc.)
+//    - Context gathering from active editor
+// 
+// 3. COORDINATOR LAYER (CreatePairCoordinator):
+//    - Orchestrates the complete workflow
+//    - Error handling and command registration
+//    - Coordinates between Service and UI layers
+// 
+// KEY FEATURES:
+// - Multi-strategy language detection (file extension, VS Code language ID, companion files)
+// - Support for custom file extensions via workspace/user settings
+// - Template system with C/C++ class, struct, and empty file templates
+// - Smart directory detection and workspace folder handling
+// - Language mismatch warnings for better user experience
+// - Caching mechanisms for improved performance
+// 
+// WORKFLOW:
+// 1. Detect target directory (current file's directory or workspace folder)
+// 2. Analyze current context to determine programming language (C vs C++)
+// 3. Present template options (custom rules or default templates)
+// 4. Collect file name with validation
+// 5. Check for existing files to prevent overwrites
+// 6. Generate file content from templates
+// 7. Write files and open header file for editing
+// 
+// EXTENSIBILITY:
+// The architecture supports easy extension through:
+// - New template types via TEMPLATE_RULES and FILE_TEMPLATES
+// - Custom file extensions via PairingRuleService integration
+// - Additional language detection strategies
+// - Enhanced UI workflows without affecting business logic
+//
+
 import * as path from 'path';
 import * as vscode from 'vscode';
 
 import { ClangdContext } from './clangd-context';
 import { PairingRule, PairingRuleService } from './pairing-rule-manager';
 
-// Types for better type safety
+// Core type definitions for language and template identification
 type Language = 'c' | 'cpp';
 type TemplateKey = 'CPP_CLASS' | 'CPP_STRUCT' | 'C_STRUCT' | 'C_EMPTY' | 'CPP_EMPTY';
 
-// Regular expression pattern to validate C/C++ identifiers
+// Validation patterns for C/C++ identifier compliance
 const VALIDATION_PATTERNS = {
   IDENTIFIER: /^[a-zA-Z_][a-zA-Z0-9_]*$/
-} as const;
+};
 
-// Default placeholder names for different file types
+// Default placeholder names used in input dialogs for different template types
 const DEFAULT_PLACEHOLDERS = {
   C_EMPTY: 'my_c_functions',
   C_STRUCT: 'MyStruct',
   CPP_EMPTY: 'utils',
   CPP_CLASS: 'MyClass',
   CPP_STRUCT: 'MyStruct'
-} as const;
+};
 
-// Template rules for available file pair types
-const TEMPLATE_RULES: readonly PairingRule[] = Object.freeze([
-  Object.freeze({
+// Available template configurations for file pair creation
+// Each rule defines the language, file extensions, and template characteristics
+const TEMPLATE_RULES: PairingRule[] = [
+  {
     key: 'cpp_empty',
     label: '$(new-file) C++ Pair',
     description: 'Creates a basic Header/Source file pair with header guards.',
-    language: 'cpp' as const,
+    language: 'cpp',
     headerExt: '.h',
     sourceExt: '.cpp'
-  }),
-  Object.freeze({
+  },
+  {
     key: 'cpp_class',
     label: '$(symbol-class) C++ Class',
     description:
       'Creates a Header/Source file pair with a boilerplate class definition.',
-    language: 'cpp' as const,
+    language: 'cpp',
     headerExt: '.h',
     sourceExt: '.cpp',
     isClass: true
-  }),
-  Object.freeze({
+  },
+  {
     key: 'cpp_struct',
     label: '$(symbol-struct) C++ Struct',
     description:
       'Creates a Header/Source file pair with a boilerplate struct definition.',
-    language: 'cpp' as const,
+    language: 'cpp',
     headerExt: '.h',
     sourceExt: '.cpp',
     isStruct: true
-  }),
-  Object.freeze({
+  },
+  {
     key: 'c_empty',
     label: '$(file-code) C Pair',
     description: 'Creates a basic .h/.c file pair for function declarations.',
-    language: 'c' as const,
+    language: 'c',
     headerExt: '.h',
     sourceExt: '.c'
-  }),
-  Object.freeze({
+  },
+  {
     key: 'c_struct',
     label: '$(symbol-struct) C Struct',
     description: 'Creates a .h/.c file pair with a boilerplate typedef struct.',
-    language: 'c' as const,
+    language: 'c',
     headerExt: '.h',
     sourceExt: '.c',
     isStruct: true
-  })
-]);
+  }
+];
 
-// File templates with immutable structure
-const FILE_TEMPLATES = Object.freeze({
-  CPP_CLASS: Object.freeze({
+// Immutable template definitions for generating file content
+// Templates use {{variableName}} syntax for placeholder substitution
+// Each template type (class, struct, empty) has both header and source variants
+const FILE_TEMPLATES = {
+  CPP_CLASS: {
     header: `#ifndef {{headerGuard}}
 #define {{headerGuard}}
 
@@ -98,8 +155,8 @@ private:
   // Destructor implementation
 }
 `
-  }),
-  CPP_STRUCT: Object.freeze({
+  },
+  CPP_STRUCT: {
     header: `#ifndef {{headerGuard}}
 #define {{headerGuard}}
 
@@ -110,8 +167,8 @@ struct {{fileName}} {
 #endif  // {{headerGuard}}
 `,
     source: '{{includeLine}}'
-  }),
-  C_STRUCT: Object.freeze({
+  },
+  C_STRUCT: {
     header: `#ifndef {{headerGuard}}
 #define {{headerGuard}}
 
@@ -122,8 +179,8 @@ typedef struct {
 #endif  // {{headerGuard}}
 `,
     source: '{{includeLine}}'
-  }),
-  C_EMPTY: Object.freeze({
+  },
+  C_EMPTY: {
     header: `#ifndef {{headerGuard}}
 #define {{headerGuard}}
 
@@ -135,8 +192,8 @@ typedef struct {
 
 // Implementations for {{fileName}}.c
 `
-  }),
-  CPP_EMPTY: Object.freeze({
+  },
+  CPP_EMPTY: {
     header: `#ifndef {{headerGuard}}
 #define {{headerGuard}}
 
@@ -145,41 +202,41 @@ typedef struct {
 #endif  // {{headerGuard}}
 `,
     source: '{{includeLine}}'
-  })
-} as const);
+  }
+};
 
-// Service Layer - Core business logic
+//
+// SERVICE LAYER - Core Business Logic
+// 
+// PairCreatorService contains all the pure business logic for file pair creation.
+// It operates without any VS Code API dependencies, making it highly testable
+// and reusable. All external dependencies are injected through method parameters.
+// 
+// Key Responsibilities:
+// - Language detection using multiple strategies
+// - Template content generation and variable substitution
+// - File system operations with caching
+// - Business rule validation and logic
+// - Pure function computations
+//
 class PairCreatorService {
-  // Cache for expensive file system operations
-  private static readonly fileStatCache = new Map<string, Promise<boolean>>();
-
-  // Definitive file extensions for fast lookup
-  private static readonly DEFINITIVE_EXTENSIONS = Object.freeze({
+  // Pre-compiled file extension sets for fast language detection lookup
+  // Used in the fast-path of language detection algorithm
+  public static readonly DEFINITIVE_EXTENSIONS = {
     c: new Set(['.c']),
     cpp: new Set(['.cpp', '.cc', '.cxx', '.hh', '.hpp', '.hxx'])
-  });
+  };
 
 
-  // Optimized file existence check with caching
-  private static async fileExists(filePath: string): Promise<boolean> {
-    if (this.fileStatCache.has(filePath)) {
-      return this.fileStatCache.get(filePath)!;
-    }
-
-    const promise =
-      Promise.resolve(vscode.workspace.fs.stat(vscode.Uri.file(filePath))
-        .then(() => true, () => false));
-
-    this.fileStatCache.set(filePath, promise);
-
-    // Auto-clear cache entry after 5 seconds to prevent memory leaks
-    setTimeout(() => this.fileStatCache.delete(filePath), 5000);
-
-    return promise;
-  }
-
-  /** Detects programming language from file info (pure business logic) */
-  public async detectLanguage(languageId?: string, filePath?: string):
+  // Detects programming language from file information using multiple detection strategies.
+  // Implementation approach:
+  // 1. Fast path: Use file extension lookup for definitive extensions (.c, .cpp, .cc, etc.)
+  // 2. VS Code integration: Leverage VS Code's language detection for accuracy
+  // 3. Header file analysis: For .h files, examine companion files to determine C vs C++
+  // 4. Fallback strategy: Return best guess with uncertainty flag
+  // This multi-layered approach ensures high accuracy while maintaining performance.
+  public async detectLanguage(languageId?: string, filePath?: string,
+    fileExistsCheck?: (path: string) => Promise<boolean>):
     Promise<{ language: Language, uncertain: boolean }> {
     if (!languageId || !filePath) {
       return { language: 'cpp', uncertain: true };
@@ -195,45 +252,69 @@ class PairCreatorService {
       return { language: 'cpp', uncertain: false };
     }
 
+    // Use VS Code's language detection for better accuracy
+    if (languageId === 'c') {
+      return { language: 'c', uncertain: false };
+    }
+    if (languageId === 'cpp' || languageId === 'cxx') {
+      return { language: 'cpp', uncertain: false };
+    }
+
     // Special handling for .h files with companion file detection
     if (ext === '.h') {
-      const result = await this.detectLanguageForHeaderFile(filePath);
+      const result = await this.detectLanguageForHeaderFile(filePath, fileExistsCheck);
       if (result)
         return result;
     }
 
-    // Fallback to language ID
+    // Fallback with uncertainty
     return { language: languageId === 'c' ? 'c' : 'cpp', uncertain: true };
   }
 
-  // Optimized header file language detection
-  private async detectLanguageForHeaderFile(filePath: string):
+  // Specialized language detection for header files (.h) using companion file analysis.
+  // Implementation approach:
+  // 1. Check for C companion files first (.c extension) - less common, early exit optimization
+  // 2. Parallel check for C++ companion files (.cpp, .cc, .cxx) - common extensions
+  // 3. Return confident result if companion found, uncertain C++ default otherwise
+  // This targeted approach resolves the C vs C++ ambiguity for .h files by examining
+  // the project context rather than relying on heuristics or content analysis.
+  private async detectLanguageForHeaderFile(filePath: string,
+    fileExistsCheck?: (path: string) => Promise<boolean>):
     Promise<{ language: Language, uncertain: boolean } | null> {
+    if (!fileExistsCheck) {
+      return { language: 'cpp', uncertain: true };
+    }
+
     const baseName = path.basename(filePath, '.h');
     const dirPath = path.dirname(filePath);
 
     // Check for C companion file first (less common, check first for early
     // exit)
     const cFile = path.join(dirPath, `${baseName}.c`);
-    if (await PairCreatorService.fileExists(cFile)) {
+    if (await fileExistsCheck(cFile)) {
       return { language: 'c', uncertain: false };
     }
 
     // Check for C++ companion files in parallel
     const cppExtensions = ['.cpp', '.cc', '.cxx'];
     const cppChecks =
-      cppExtensions.map(ext => PairCreatorService.fileExists(
+      cppExtensions.map(ext => fileExistsCheck(
         path.join(dirPath, `${baseName}${ext}`)));
 
     const results = await Promise.all(cppChecks);
-    if (results.some(exists => exists)) {
+    if (results.some((exists: boolean) => exists)) {
       return { language: 'cpp', uncertain: false };
     }
 
     return { language: 'cpp', uncertain: true };
   }
 
-  // Gets all available pairing rules (custom + workspace + user)
+  //
+  // Retrieves all available pairing rules from workspace and user settings.
+  // Combines custom rules defined in both scopes for comprehensive rule selection.
+  // 
+  // @returns Array of all available pairing rules
+  //
   public getAllPairingRules(): PairingRule[] {
     return [
       ...(PairingRuleService.getRules('workspace') ?? []),
@@ -241,7 +322,12 @@ class PairCreatorService {
     ];
   }
 
-  // Gets custom C++ extensions if available
+  //
+  // Extracts custom C++ file extensions if custom rules are available.
+  // Used for adapting default templates to match custom extension preferences.
+  // 
+  // @returns Custom extension configuration or null if none exists
+  //
   public getCustomCppExtensions(): { headerExt: string, sourceExt: string } | null {
     const allRules = this.getAllPairingRules();
     const cppCustomRule = allRules.find(r => r.language === 'cpp');
@@ -252,14 +338,26 @@ class PairCreatorService {
       : null;
   }
 
-  /** Converts string to PascalCase efficiently (pure function) */
+  //
+  // Converts kebab-case or snake_case strings to PascalCase format.
+  // Commonly used for generating class names from file names.
+  // 
+  // @param input - String to convert (e.g., "my-class" or "my_class")
+  // @returns PascalCase string (e.g., "MyClass")
+  //
   public toPascalCase(input: string): string {
     return input.split(/[-_]+/)
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join('');
   }
 
-  /** Gets default placeholder based on rule type (pure function) */
+  //
+  // Determines the appropriate placeholder text for input dialogs based on rule type.
+  // Provides context-appropriate default names for different template types.
+  // 
+  // @param rule - The pairing rule that determines the placeholder type
+  // @returns Appropriate placeholder string for the rule type
+  //
   public getDefaultPlaceholder(rule: PairingRule): string {
     if (rule.isClass) {
       return DEFAULT_PLACEHOLDERS.CPP_CLASS;
@@ -274,17 +372,29 @@ class PairCreatorService {
       : DEFAULT_PLACEHOLDERS.CPP_EMPTY;
   }
 
-  // Optimized line ending detection
-  public getLineEnding(): string {
-    const eolSetting =
-      vscode.workspace.getConfiguration('files').get<string>('eol');
-
+  //
+  // Determines the appropriate line ending format for the current platform.
+  // Respects user preferences while providing sensible defaults.
+  // 
+  // @param eolSetting - VS Code EOL setting value
+  // @returns Line ending string (\n or \r\n)
+  //
+  public getLineEnding(eolSetting?: string): string {
     return eolSetting === '\n' || eolSetting === '\r\n' ? eolSetting
       : process.platform === 'win32' ? '\r\n'
         : '\n';
   }
 
-  // Generates file content with improved template selection
+  //
+  // Generates complete file content for both header and source files.
+  // Selects appropriate templates based on rule characteristics and applies
+  // variable substitution to create final file content.
+  // 
+  // @param fileName - Base name for the files (without extension)
+  // @param eol - Line ending format to use
+  // @param rule - Pairing rule defining template type and extensions
+  // @returns Object containing both header and source file content
+  //
   public generateFileContent(fileName: string, eol: string, rule: PairingRule): { headerContent: string; sourceContent: string; } {
     const templateKey: TemplateKey =
       rule.isClass ? 'CPP_CLASS'
@@ -293,11 +403,11 @@ class PairCreatorService {
             : 'CPP_EMPTY';
 
     const templates = FILE_TEMPLATES[templateKey];
-    const context = Object.freeze({
+    const context = {
       fileName,
       headerGuard: `${fileName.toUpperCase()}_H_`,
       includeLine: `#include "${fileName}${rule.headerExt}"`
-    });
+    };
 
     const headerContent = this.applyTemplate(templates.header, context);
     const sourceContent = this.applyTemplate(templates.source, context);
@@ -308,14 +418,28 @@ class PairCreatorService {
     };
   }
 
-  // Optimized template variable substitution
+  //
+  // Performs template variable substitution using a simple regex-based approach.
+  // Replaces {{variableName}} patterns with corresponding context values.
+  // 
+  // @param template - Template string containing {{variable}} placeholders
+  // @param context - Object mapping variable names to replacement values
+  // @returns Template with all variables substituted
+  //
   private applyTemplate(template: string,
     context: Record<string, string>): string {
     // Pre-compile regex for better performance if used frequently
     return template.replace(/\{\{(\w+)\}\}/g, (_, key) => context[key] ?? '');
   }
 
-  // File existence check with parallel processing
+  //
+  // Checks if either the header or source file already exists at the target location.
+  // Uses parallel checking for performance and returns the path of any existing file.
+  // 
+  // @param headerPath - URI of the proposed header file location
+  // @param sourcePath - URI of the proposed source file location
+  // @returns Path of existing file or null if both locations are available
+  //
   public async checkFileExistence(headerPath: vscode.Uri,
     sourcePath: vscode.Uri):
     Promise<string | null> {
@@ -332,7 +456,16 @@ class PairCreatorService {
     return results.find(path => path !== null) ?? null;
   }
 
-  // Optimized file writing with error handling
+  //
+  // Writes both header and source files to the file system concurrently.
+  // Uses parallel writing for better performance and provides comprehensive error handling.
+  // 
+  // @param headerPath - URI where header file should be written
+  // @param sourcePath - URI where source file should be written
+  // @param headerContent - Content for the header file
+  // @param sourceContent - Content for the source file
+  // @throws Error with descriptive message if writing fails
+  //
   public async writeFiles(headerPath: vscode.Uri, sourcePath: vscode.Uri,
     headerContent: string,
     sourceContent: string): Promise<void> {
@@ -348,7 +481,15 @@ class PairCreatorService {
     }
   }
 
-  /** Smart target directory detection (pure business logic) */
+  //
+  // Intelligently determines the target directory for new file creation.
+  // Prioritizes the current file's directory, then single workspace folders.
+  // Returns undefined for multiple workspace folders to trigger UI selection.
+  // 
+  // @param activeDocumentPath - Path of currently active document (if any)
+  // @param workspaceFolders - Available workspace folders
+  // @returns Target directory URI or undefined if UI selection needed
+  //
   public async getTargetDirectory(activeDocumentPath?: string,
     workspaceFolders
       ?: readonly vscode.WorkspaceFolder[]):
@@ -367,26 +508,107 @@ class PairCreatorService {
     return undefined;
   }
 
-  /** Language mismatch warning logic (pure business logic) */
+  //
+  // Determines whether to display a language mismatch warning to the user.
+  // Implements business logic for detecting potential language/template conflicts.
+  // Currently focuses on C context choosing C++ templates.
+  // 
+  // @param language - Detected programming language from current context
+  // @param result - Selected pairing rule/template
+  // @param currentDir - Current working directory path
+  // @param activeFilePath - Path of currently active file
+  // @param checkForCppFilesInDirectory - Function to check for C++ files in directory
+  // @param fileExistsCheck - Function to check if files exist
+  // @returns True if warning should be shown, false otherwise
+  //
   public async shouldShowLanguageMismatchWarning(language: Language,
     result: PairingRule,
     currentDir?: string,
-    activeFilePath
-      ?: string): Promise<boolean> {
+    activeFilePath?: string,
+    checkForCppFilesInDirectory?: (dirPath: string) => Promise<boolean>,
+    fileExistsCheck?: (path: string) => Promise<boolean>): Promise<boolean> {
     if (!currentDir || !activeFilePath) {
       return true;
     }
 
+    // Only for C context choosing C++ template
     if (language === 'c' && result.language === 'cpp') {
-      return this.checkForCppFilesInDirectory(currentDir);
+      return checkForCppFilesInDirectory ?
+        await checkForCppFilesInDirectory(currentDir) : true;
     }
 
     return this.checkForCorrespondingSourceFiles(currentDir, activeFilePath,
-      language);
+      language, fileExistsCheck);
   }
 
-  // Check for C++ files in directory
-  private async checkForCppFilesInDirectory(dirPath: string): Promise<boolean> {
+  //
+  // Checks for the existence of corresponding source files in the same directory.
+  // Used as part of the language mismatch warning logic to detect project context.
+  // 
+  // @param dirPath - Directory path to search in
+  // @param filePath - Current file path for base name extraction
+  // @param language - Programming language to check extensions for
+  // @param fileExistsCheck - Function to check file existence
+  // @returns True if warning should be shown (no corresponding files found)
+  //
+  private async checkForCorrespondingSourceFiles(
+    dirPath: string, filePath: string, language: Language,
+    fileExistsCheck?: (path: string) => Promise<boolean>): Promise<boolean> {
+    if (!fileExistsCheck) {
+      return true; // Show warning if can't check
+    }
+
+    const baseName = path.basename(filePath, path.extname(filePath));
+    const extensions = language === 'c' ? ['.c'] : ['.cpp', '.cc', '.cxx'];
+
+    const checks = extensions.map(ext => fileExistsCheck(
+      path.join(dirPath, `${baseName}${ext}`)));
+
+    try {
+      const results = await Promise.all(checks);
+      return !results.some(
+        (exists: boolean) => exists); // Show warning if NO corresponding files found
+    } catch {
+      return true; // Show warning if can't check
+    }
+  }
+
+  //
+  // Static utility method for checking file existence with performance caching.
+  // Implements a time-based cache to avoid repeated file system calls.
+  // Moved from UI layer to maintain better separation of concerns.
+  // 
+  // @param filePath - Absolute path to file to check
+  // @returns Promise resolving to true if file exists, false otherwise
+  //
+  private static fileStatCache = new Map<string, Promise<boolean>>();
+
+  public static async fileExists(filePath: string): Promise<boolean> {
+    if (PairCreatorService.fileStatCache.has(filePath)) {
+      return PairCreatorService.fileStatCache.get(filePath)!;
+    }
+
+    const promise =
+      Promise.resolve(vscode.workspace.fs.stat(vscode.Uri.file(filePath))
+        .then(() => true, () => false));
+
+    PairCreatorService.fileStatCache.set(filePath, promise);
+
+    // Auto-clear cache entry after 5 seconds to prevent memory leaks
+    setTimeout(() => PairCreatorService.fileStatCache.delete(filePath), 5000);
+
+    return promise;
+  }
+
+  //
+  // Static utility method for checking if a directory contains C++ files.
+  // Used in language mismatch warning logic to understand project context.
+  // Moved from UI layer to consolidate file system utilities in Service layer.
+  // 
+  // @param dirPath - Directory path to scan for C++ files
+  // @returns Promise resolving to true if warning should be shown (no C++ files found)
+  //
+  public static async checkForCppFilesInDirectory(dirPath: string): Promise<boolean> {
     try {
       const entries =
         await vscode.workspace.fs.readDirectory(vscode.Uri.file(dirPath));
@@ -400,36 +622,39 @@ class PairCreatorService {
       return true; // Show warning if can't check
     }
   }
-
-  // Check for corresponding source files
-  private async checkForCorrespondingSourceFiles(
-    dirPath: string, filePath: string, language: Language): Promise<boolean> {
-    const baseName = path.basename(filePath, path.extname(filePath));
-    const extensions = language === 'c' ? ['.c'] : ['.cpp', '.cc', '.cxx'];
-
-    const checks = extensions.map(ext => PairCreatorService.fileExists(
-      path.join(dirPath, `${baseName}${ext}`)));
-
-    try {
-      const results = await Promise.all(checks);
-      return !results.some(
-        exists => exists); // Show warning if NO corresponding files found
-    } catch {
-      return true; // Show warning if can't check
-    }
-  }
 }
 
-// UI Layer
-
-// PairCreatorUI handles all user interface interactions for file pair creation.
-// It manages dialogs, input validation, and user choices.
+//
+// UI LAYER - User Interface Management
+// 
+// PairCreatorUI handles all user interactions and VS Code API integrations.
+// It maintains a clean separation from business logic by delegating all
+// computational work to the Service layer and focusing purely on:
+// - User input collection and validation
+// - Dialog management and user feedback
+// - Context gathering from VS Code environment
+// - UI workflow orchestration
+// 
+// The UI layer never contains business logic - it only translates between
+// user interactions and service layer operations.
+//
 class PairCreatorUI {
   private service: PairCreatorService;
 
+  //
+  // Constructs the UI layer with a reference to the service layer.
+  // 
+  // @param service - Service layer instance for business logic delegation
+  //
   constructor(service: PairCreatorService) { this.service = service; }
 
-  /** Gets placeholder name for input dialog, considering active file context */
+  //
+  // Generates context-appropriate placeholder text for file name input dialogs.
+  // Uses current file name when available, applying proper case conventions.
+  // 
+  // @param rule - Pairing rule that determines naming conventions
+  // @returns Placeholder string for input dialog
+  //
   private getPlaceholder(rule: PairingRule): string {
     const activeEditor = vscode.window.activeTextEditor;
 
@@ -444,7 +669,13 @@ class PairCreatorUI {
     return this.service.getDefaultPlaceholder(rule);
   }
 
-  /** Gets target directory with UI fallback for multiple workspace folders */
+  //
+  // Determines the target directory for file creation with UI fallback handling.
+  // Attempts service layer logic first, then handles multi-workspace scenarios
+  // by presenting a selection dialog to the user.
+  // 
+  // @returns Selected target directory URI or undefined if cancelled
+  //
   public async getTargetDirectory(): Promise<vscode.Uri | undefined> {
     const activeEditor = vscode.window.activeTextEditor;
     const activeDocumentPath =
@@ -470,7 +701,14 @@ class PairCreatorUI {
     return undefined;
   }
 
-  /** Checks if language mismatch warning should be shown with UI context */
+  //
+  // Evaluates whether to show language mismatch warnings by gathering UI context.
+  // Collects current editor information and delegates decision logic to service layer.
+  // 
+  // @param language - Detected programming language
+  // @param result - Selected pairing rule
+  // @returns True if warning should be displayed to user
+  //
   private async shouldShowLanguageMismatchWarning(language: Language,
     result: PairingRule):
     Promise<boolean> {
@@ -485,10 +723,17 @@ class PairCreatorUI {
         : undefined;
 
     return this.service.shouldShowLanguageMismatchWarning(
-      language, result, currentDir, activeFilePath);
+      language, result, currentDir, activeFilePath,
+      PairCreatorService.checkForCppFilesInDirectory,
+      PairCreatorService.fileExists);
   }
 
-  /** Detects programming language from active editor */
+  //
+  // Detects the programming language from the currently active editor.
+  // Gathers context from VS Code environment and delegates detection logic to service layer.
+  // 
+  // @returns Language detection result with uncertainty flag
+  //
   public async detectLanguage():
     Promise<{ language: Language, uncertain: boolean }> {
     const activeEditor = vscode.window.activeTextEditor;
@@ -497,10 +742,27 @@ class PairCreatorUI {
       ? activeEditor.document.uri.fsPath
       : undefined;
 
-    return this.service.detectLanguage(languageId, filePath);
+    return this.service.detectLanguage(languageId, filePath, PairCreatorService.fileExists);
   }
 
-  // Adapts template rules for display in UI based on custom extensions
+  //
+  // Retrieves the preferred line ending format from VS Code settings.
+  // Delegates the determination logic to service layer while handling VS Code API access.
+  // 
+  // @returns Appropriate line ending string for current platform/settings
+  //
+  public getLineEnding(): string {
+    const eolSetting = vscode.workspace.getConfiguration('files').get<string>('eol');
+    return this.service.getLineEnding(eolSetting);
+  }
+
+  //
+  // Adapts template rules for UI display by applying custom extension preferences.
+  // Modifies rule descriptions to reflect actual file extensions that will be used.
+  // 
+  // @param rule - Original template rule
+  // @returns Adapted rule with updated descriptions and extensions
+  //
   private adaptRuleForDisplay(rule: PairingRule): PairingRule {
     if (rule.language !== 'cpp') {
       return rule;
@@ -522,8 +784,14 @@ class PairCreatorUI {
     return { ...rule, description: newDescription, headerExt, sourceExt };
   }
 
-  // Prepares template choices for UI display with proper ordering and
-  // adaptation
+  //
+  // Prepares and orders template choices for display in selection dialogs.
+  // Implements intelligent ordering based on detected language and certainty level.
+  // 
+  // @param language - Detected programming language
+  // @param uncertain - Whether language detection was uncertain
+  // @returns Ordered array of template rules for display
+  //
   private prepareTemplateChoices(language: 'c' | 'cpp',
     uncertain: boolean): PairingRule[] {
     const desiredOrder =
@@ -539,7 +807,15 @@ class PairCreatorUI {
       .map(rule => this.adaptRuleForDisplay(rule));
   }
 
-  // Filters custom rules by language and prepares them for display
+  //
+  // Processes custom rules and prepares them for UI display alongside default templates.
+  // Handles complex logic for merging custom rules with adapted default templates
+  // and organizing them by language and template type.
+  // 
+  // @param allRules - All available custom pairing rules
+  // @param language - Current programming language context
+  // @returns Organized rule collections for different UI sections
+  //
   private prepareCustomRulesChoices(allRules: PairingRule[],
     language: 'c' | 'cpp'): {
       languageRules: PairingRule[],
@@ -621,13 +897,16 @@ class PairCreatorUI {
     };
   }
 
-  // Checks for existing custom pairing rules and offers to create them if not
-  // found. For C++, presents options to use custom rules or create new ones.
-  // For C, always uses default templates.
-  // @param language - The detected programming language
+  //
+  // Checks for existing custom pairing rules and offers creation options if none exist.
+  // Implements the main decision logic for custom rule workflows:
+  // - For C language: Always uses default templates
+  // - For C++: Checks for existing rules and offers creation if uncertain
+  // 
+  // @param language - Detected programming language
   // @param uncertain - Whether language detection was uncertain
-  // @returns Selected rule, null if cancelled, undefined for defaults, or
-  // 'use_default' flag
+  // @returns Selected rule, null if cancelled, undefined for defaults, or 'use_default' flag
+  //
   public async checkAndOfferCustomRules(language: 'c' | 'cpp',
     uncertain: boolean):
     Promise<PairingRule | null | undefined | 'use_default'> {
@@ -655,12 +934,15 @@ class PairCreatorUI {
     return undefined;
   }
 
-  // Presents a selection dialog for custom pairing rules.
-  // Combines custom rules with adapted default templates and cross-language
-  // options.
+  //
+  // Presents a comprehensive selection dialog for custom pairing rules.
+  // Combines custom rules with adapted default templates and cross-language options.
+  // Includes a special option to fall back to default templates.
+  // 
   // @param allRules - All available custom pairing rules
-  // @param language - The current programming language context
+  // @param language - Current programming language context
   // @returns Selected rule, undefined if cancelled, or 'use_default' flag
+  //
   public async selectFromCustomRules(allRules: PairingRule[],
     language: 'c' | 'cpp'):
     Promise<PairingRule | undefined | 'use_default'> {
@@ -695,10 +977,14 @@ class PairCreatorUI {
     return result as PairingRule;
   }
 
-  // Shows a dialog offering to create custom pairing rules for C++.
+  //
+  // Displays an informational dialog offering to create custom pairing rules for C++.
   // Only applicable for C++ since C uses standard .c/.h extensions.
-  // @param language - The programming language (should be 'cpp')
-  // @returns true to create rules, false to dismiss, null if cancelled
+  // Provides user education about custom rule benefits.
+  // 
+  // @param language - Programming language (should be 'cpp' for meaningful operation)
+  // @returns true to proceed with creation, false to dismiss, null if cancelled
+  //
   public async offerToCreateCustomRules(language: 'c' |
     'cpp'): Promise<boolean | null> {
     if (language === 'c')
@@ -713,11 +999,14 @@ class PairCreatorUI {
         : null;
   }
 
-  // Guides the user through creating custom pairing rules for C++.
-  // Offers common extension combinations or allows custom input.
-  // Saves the rule to workspace or global settings.
-  // @param language - The programming language (should be 'cpp')
-  // @returns The created custom rule or undefined if cancelled
+  //
+  // Guides users through the complete custom pairing rule creation process.
+  // Provides common extension combinations and allows custom input.
+  // Handles rule persistence to workspace or global settings with error management.
+  // 
+  // @param language - Programming language (should be 'cpp' for meaningful operation)
+  // @returns Created custom rule or undefined if cancelled/failed
+  //
   public async createCustomRules(language: 'c' |
     'cpp'): Promise<PairingRule | undefined> {
     if (language === 'c')
@@ -822,11 +1111,15 @@ class PairCreatorUI {
     }
   }
 
-  // Prompts the user to select a pairing rule from available options.
-  // First checks for custom rules, then falls back to default templates.
-  // @param language - The detected programming language
+  //
+  // Orchestrates the complete pairing rule selection process.
+  // First attempts custom rule workflows, then falls back to default templates.
+  // Includes language mismatch warning logic for better user experience.
+  // 
+  // @param language - Detected programming language
   // @param uncertain - Whether language detection was uncertain
   // @returns Selected pairing rule or undefined if cancelled
+  //
   public async promptForPairingRule(language: 'c' | 'cpp', uncertain: boolean):
     Promise<PairingRule | undefined> {
     const customRulesResult =
@@ -847,16 +1140,13 @@ class PairCreatorUI {
       title: 'Create Source/Header Pair'
     });
 
-    if (result && !uncertain && language !== result.language) {
+    if (result && language === 'c' && result.language === 'cpp') {
       const shouldShowWarning =
         await this.shouldShowLanguageMismatchWarning(language, result);
 
       if (shouldShowWarning) {
-        const detectedLangName = language === 'c' ? 'C' : 'C++';
-        const selectedLangName = result.language === 'c' ? 'C' : 'C++';
-
         const shouldContinue = await vscode.window.showWarningMessage(
-          `You're working in a ${detectedLangName} file but selected a ${selectedLangName} template. This may create files with incompatible extensions or content.`,
+          `You're working in a C file but selected a C++ template. This may create files with incompatible extensions or content.`,
           'Continue', 'Cancel');
 
         if (shouldContinue !== 'Continue')
@@ -867,11 +1157,14 @@ class PairCreatorUI {
     return result;
   }
 
-  // Prompts the user to enter a name for the new file pair.
-  // Validates input as a valid C/C++ identifier and provides
-  // context-appropriate prompts.
-  // @param rule - The selected pairing rule that determines the prompt message
-  // @returns The entered file name or undefined if cancelled
+  //
+  // Prompts user to enter a name for the new file pair with comprehensive validation.
+  // Provides context-appropriate prompts and validates input as valid C/C++ identifiers.
+  // Uses intelligent placeholder generation based on current context.
+  // 
+  // @param rule - Selected pairing rule that determines prompt message and validation
+  // @returns Entered file name or undefined if cancelled/invalid
+  //
   public async promptForFileName(rule: PairingRule): Promise<string | undefined> {
     const prompt = rule.isClass ? 'Please enter the name for the new C++ class.'
       : rule.isStruct
@@ -889,9 +1182,13 @@ class PairCreatorUI {
     });
   }
 
-  // Shows success message and opens the newly created header file
+  //
+  // Displays success notification and opens the newly created header file for editing.
+  // Provides immediate feedback to user and sets them up for productive work.
+  // 
   // @param headerPath - URI of the created header file
   // @param sourcePath - URI of the created source file
+  //
   public async showSuccessAndOpenFile(headerPath: vscode.Uri,
     sourcePath: vscode.Uri): Promise<void> {
     await vscode.window.showTextDocument(
@@ -901,17 +1198,31 @@ class PairCreatorUI {
   }
 }
 
-// Main Coordinator Class
-
-// PairCreator coordinates the UI and Service layers to handle the complete file
-// pair creation workflow. It serves as the main entry point and orchestrates
-// the entire process.
-class PairCreator implements vscode.Disposable {
+//
+// COORDINATOR LAYER - Workflow Orchestration
+// 
+// CreatePairCoordinator serves as the main entry point and orchestrates the complete
+// file pair creation workflow. It coordinates between the UI and Service layers
+// without performing any creation logic itself.
+// 
+// Key Responsibilities:
+// - Command registration and lifecycle management
+// - High-level workflow orchestration
+// - Error handling and user feedback
+// - Resource cleanup and disposal
+// 
+// The coordinator implements the Command Pattern and serves as the main
+// integration point between VS Code's command system and the application logic.
+//
+class CreatePairCoordinator implements vscode.Disposable {
   private command: vscode.Disposable;
   private service: PairCreatorService;
   private ui: PairCreatorUI;
 
-  // Constructor registers the VS Code command for creating source/header pairs
+  //
+  // Initializes the coordinator and registers the VS Code command.
+  // Sets up the complete three-layer architecture with proper dependencies.
+  //
   constructor() {
     this.service = new PairCreatorService();
     this.ui = new PairCreatorUI(this.service);
@@ -919,11 +1230,24 @@ class PairCreator implements vscode.Disposable {
       'clangd.createSourceHeaderPair', this.create, this);
   }
 
-  // Dispose method for cleanup when extension is deactivated
+  //
+  // Cleanup method for proper resource disposal when extension is deactivated.
+  // Ensures VS Code command is properly unregistered.
+  //
   dispose() { this.command.dispose(); }
 
+  //
   // Main entry point for the file pair creation process.
-  // Orchestrates the entire workflow using the service and UI layers.
+  // Orchestrates the complete workflow using UI and Service layers:
+  // 1. Target directory determination
+  // 2. Language detection and template selection
+  // 3. File name collection and validation
+  // 4. File existence checking
+  // 5. Content generation and file writing
+  // 6. Success feedback and file opening
+  // 
+  // Provides comprehensive error handling with user-friendly messages.
+  //
   public async create(): Promise<void> {
     try {
       const targetDirectory = await this.ui.getTargetDirectory();
@@ -955,7 +1279,7 @@ class PairCreator implements vscode.Disposable {
         return;
       }
 
-      const eol = this.service.getLineEnding();
+      const eol = this.ui.getLineEnding();
       const { headerContent, sourceContent } =
         this.service.generateFileContent(fileName, eol, rule);
 
@@ -970,10 +1294,7 @@ class PairCreator implements vscode.Disposable {
   }
 }
 
-// Registers the create source/header pair command with the VS Code extension
-// context. This function should be called during extension activation to make
-// the command available.
-// @param context - The VS Code extension context for managing disposables
+// Command registration function to integrate with VS Code extension system.
 export function registerCreateSourceHeaderPairCommand(context: ClangdContext) {
-  context.subscriptions.push(new PairCreator());
+  context.subscriptions.push(new CreatePairCoordinator());
 }
