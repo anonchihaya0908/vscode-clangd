@@ -145,7 +145,19 @@ class PairCreator implements vscode.Disposable {
       }
 
       const eolSetting = vscode.workspace.getConfiguration('files').get<string>('eol');
-      const eol = (eolSetting === '\n' || eolSetting === '\r\n') ? eolSetting : '\n';
+
+      // Determine the appropriate line ending based on VS Code settings and platform
+      let eol: string;
+      if (eolSetting === '\n' || eolSetting === '\r\n') {
+        eol = eolSetting;
+      } else if (eolSetting === 'auto') {
+        // Use platform-specific line endings when set to auto
+        eol = process.platform === 'win32' ? '\r\n' : '\n';
+      } else {
+        // Fallback to platform-specific default
+        eol = process.platform === 'win32' ? '\r\n' : '\n';
+      }
+
       const { headerContent, sourceContent } = this.generateFileContent(fileName, eol, rule);
 
       await this.writeFiles(headerPath, sourcePath, headerContent, sourceContent);
